@@ -40,7 +40,7 @@ $ ./testmem 65536 1
   Est(us)        PagesAccessed
    163547                65536 
 ```
-We accessed 65536 pages in 736 microseconds.  In this case WSS == RSS.
+We accessed 65536 pages in 163547 microseconds.  In this case WSS == RSS.
 
 We can see the allocation by examining /proc/$(pgrep testmem)/map
 
@@ -154,11 +154,64 @@ we marked it as idle.
 
 ## How do I use it?
 
-Here we will 
+Idle page tracking requires a kernel built with
+
+```
+CONFIG_PAGE_IDLE_FLAG=y
+CONFIG_IDLE_PAGE_TRACKING=y
+```
+
+With these in place the kernel exports an idle page tracking interface
+in `/sys/kernel/mm/page_idle/bitmap` . The bitmap uses one bit per
+physical page, indexed by page frame number (pfn).  We can set the bits
+in the idle map by writing all 1s to every bit, and then later read the
+idle map back to see which pages were accessed.  If a page was accessed,
+the associated idle map bit is set to 0.
+
+To map from cgroup to page frame number we can can use `/proc/kpagecgroup`;
+it is a file indexed by page frame number, with each indexed value containing
+the cgroup directory inode number associated with that page frame number.
+
+So for example if we have cgroup `/sys/fs/cgroup/memory/foo`, we can get its
+inode via `ls -i`
+
+```
+$ ls -i /sys/fs/cgroup/memory/
+    3 cgroup.clone_children                   9 memory.max_usage_in_bytes
+   16 cgroup.event_control                   34 memory.memsw.failcnt
+    2 cgroup.procs                           33 memory.memsw.limit_in_bytes
+    4 cgroup.sane_behavior                   32 memory.memsw.max_usage_in_bytes
+23683 foo                                    31 memory.memsw.usage_in_bytes
+```
+
+So it has inode number 23683; now we know every page frame number in
+/proc/kpagecgroup with that value belongs to that cgroup.
+
+So putting these two pieces together, we can
+
+- mark all pages as idle
+- wait for interval
+- after interval, examine all pfns associated with the cgroup to see if idle
+  bits were switched off; this gives us the number of pages accessed in the
+  interval
+- repeat
+
+This is what the main loop in [wss-v3.c](./wss-v3.c) does.
 
 ## What are the overheads?
 
-# 3. Multi-generational LRU
+There are overheads associated with
+
+- writing the page idle map
+- reading the page idle map
+- reading the page-to-cgroup mappings
+
+Unfortunately we need to set/read idle flags on all memory with this approach as
+pages may be added to the workload dynamically during its operation via
+`malloc()`, loading libraries etc.  Similarly we need to read the entire
+kpagecgroup map.
+
+# 2. Multi-generational LRU
 
 ## What is it?
 
