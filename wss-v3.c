@@ -1,6 +1,6 @@
 /*
- * wss-v2.c	Estimate the working set size (WSS) for a process on Linux.
- *		Version 2: suited for large processes.
+ * wss-v3.c	Estimate the working set size (WSS) for a cgroupv2 on Linux.
+ *		Version 3: uses cgroups instead of processes.
  *
  * This is a proof of concept that uses idle page tracking from Linux 4.3+, for
  * a page-based WSS estimation. This version snapshots the entire system's idle
@@ -18,7 +18,7 @@
  *
  * REQUIREMENTS: Linux 4.3+
  *
- * USAGE: wss PID duration(s)
+ * USAGE: wss-v3 CGROUP_PATH duration(s)
  *
  * COLUMNS:
  *	- Est(s):  Estimated WSS measurement duration: this accounts for delays
@@ -41,22 +41,23 @@
  *
  * 13-Jan-2018	Brendan Gregg	Created this.
  *
+ * 9-Nov-2025 Alan Maguire modified to use cgroups
+ *
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/user.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <fcntl.h>
+#include <errno.h>
 
 // see Documentation/vm/pagemap.txt:
-#define PFN_MASK		0x007FFFFFFFFFFFFFULL	
+#define PFN_MASK		(~(0x1ffLLU << 55))
 
-#define PATHSIZE		128
-#define LINESIZE		256
-#define PAGEMAP_CHUNK_SIZE	8
 #define IDLEMAP_CHUNK_SIZE	8
 #define IDLEMAP_BUF_SIZE	4096
 
@@ -68,148 +69,73 @@
 #define BITMAP_CHUNK_SIZE	8
 #endif
 
-#ifndef PAGE_OFFSET
-#define PAGE_OFFSET		0xffff880000000000LLU
-#endif
+#define KPAGECGROUP_CHUNK_SIZE	8192
 
 // globals
 int g_debug = 0;		// 1 == some, 2 == verbose
 int g_quiet = 0;
 int g_activepages = 0;
+int g_totalpages = 0;
 int g_walkedpages = 0;
 char *g_idlepath = "/sys/kernel/mm/page_idle/bitmap";
+char *g_kpagecgrouppath = "/proc/kpagecgroup";
 unsigned long long *g_idlebuf;
 unsigned long long g_idlebufsize;
 
+const char *g_cgroup;
 
 /*
- * This code must operate on bits in the pageidle bitmap and process pagemap.
+ * This code must operate on bits in the pageidle bitmap and uses inode
+ * associated with cgroupv2 path to match pfns to the cgroup.
  * Doing this one by one via syscall read/write on a large process can take too
  * long, eg, 7 minutes for a 130 Gbyte process. Instead, I copy (snapshot) the
  * idle bitmap and pagemap into our memory with the fewest syscalls allowed,
  * and then process them with load/stores. Much faster, at the cost of some memory.
  */
 
-int mapidle(pid_t pid, unsigned long long mapstart, unsigned long long mapend)
+int cgroupidle(unsigned long long inode)
 {
-	char pagepath[PATHSIZE];
-	int pagefd;
-	char *line;
-	unsigned long long offset, i, pagemapp, pfn, idlemapp, idlebits;
-	int pagesize;
-	int err = 0;
-	unsigned long long *pagebuf, *p;
-	unsigned long long pagebufsize;
-	int activepages = 0, walkedpages = 0;
-	ssize_t len;
-	
-	// XXX: handle huge pages
-	pagesize = getpagesize();
-
-	pagebufsize = (PAGEMAP_CHUNK_SIZE * (mapend - mapstart)) / pagesize;
-	if ((pagebuf = malloc(pagebufsize)) == NULL) {
-		printf("Can't allocate memory for pagemap buf (%lld bytes)",
-		    pagebufsize);
-		return 1;
-	}
+	unsigned long long inodebuf[KPAGECGROUP_CHUNK_SIZE] = {};
+	unsigned long long idlemapp, idlebits, pfn = 0;
+	int i, pagefd, err = 0, bytes_read, inodes_read;
 
 	// open pagemap for virtual to PFN translation
-	if (sprintf(pagepath, "/proc/%d/pagemap", pid) < 0) {
-		printf("Can't allocate memory.");
-		return 1;
-	}
-	if ((pagefd = open(pagepath, O_RDONLY)) < 0) {
+	if ((pagefd = open(g_kpagecgrouppath, O_RDONLY)) < 0) {
 		perror("Can't read pagemap file");
 		return 2;
 	}
 
-	// cache pagemap to get PFN, then operate on PFN from idlemap
-	offset = mapstart / pagesize * PAGEMAP_CHUNK_SIZE;
-	if (lseek(pagefd, offset, SEEK_SET) < 0) {
-		printf("Can't seek pagemap file\n");
-		err = 1;
-		goto out;
-	}
-	p = pagebuf;
+	while ((bytes_read = read(pagefd, inodebuf, sizeof(inodebuf))) > 0) {
+		inodes_read = bytes_read/8;
+		for (i = 0; i < inodes_read; i++, pfn++) {
+			if (inodebuf[i] != inode)
+				continue;
+			g_totalpages++;
+			// read idle bit
+			idlemapp = (pfn / 64) * BITMAP_CHUNK_SIZE;
+			if (idlemapp > g_idlebufsize) {
+				printf("ERROR: bad PFN read from page map.\n");
+				err = 1;
+				goto out;
+			}
+			idlebits = g_idlebuf[idlemapp];
+			if (g_debug > 1) {
+				fprintf(stderr, "R: pfn %llx idlebits %llx\n",
+					pfn, idlebits);
+			}
 
-	// optimized: read this in one syscall
-	if (read(pagefd, p, pagebufsize) < 0) {
-		perror("Read page map failed.");
-		err = 1;
-		goto out;
-	}
-
-	for (i = 0; i < pagebufsize / sizeof (unsigned long long); i++) {
-		// convert virtual address p to physical PFN
-		pfn = p[i] & PFN_MASK;
-		if (pfn == 0)
-			continue;
-
-		// read idle bit
-		idlemapp = (pfn / 64) * BITMAP_CHUNK_SIZE;
-		if (idlemapp > g_idlebufsize) {
-			printf("ERROR: bad PFN read from page map.\n");
-			err = 1;
-			goto out;
+			if (!(idlebits & (1ULL << (pfn % 64)))) {
+				g_activepages++;
+			}
 		}
-		idlebits = g_idlebuf[idlemapp];
-		if (g_debug > 1) {
-			printf("R: p 0x%llx pfn 0x%llx idlebits 0x%llx\n",
-			    p[i], pfn, idlebits);
-		}
-
-		if (!(idlebits & (1ULL << (pfn % 64)))) {
-			if (g_debug > 1)
-			printf("bit %d 0\n", pfn % 64);
-			activepages++;
-		}
-		walkedpages++;
+		g_walkedpages += i;
 	}
-	g_activepages += activepages;
-	g_walkedpages += walkedpages;
-
-	if (g_debug)
-		printf("MAP 0x%llx-0x%llx active %d of %d walked\n",
-		       mapstart, mapend, activepages, walkedpages);
+	if (bytes_read < 0)
+		err = -errno;
 out:
 	close(pagefd);
 
 	return err;
-}
-
-int walkmaps(pid_t pid)
-{
-	FILE *mapsfile;
-	char mapspath[PATHSIZE];
-	char line[LINESIZE];
-	size_t len = 0;
-	unsigned long long mapstart, mapend;
-
-	// read virtual mappings
-	if (sprintf(mapspath, "/proc/%d/maps", pid) < 0) {
-		printf("Can't allocate memory. Exiting.");
-		exit(1);
-	}
-	if ((mapsfile = fopen(mapspath, "r")) == NULL) {
-		perror("Can't read maps file");
-		exit(2);
-	}
-
-	while (fgets(line, sizeof (line), mapsfile) != NULL) {
-		sscanf(line, "%llx-%llx", &mapstart, &mapend);
-		if (g_debug)
-			printf("MAP %llx-%llx\n", mapstart, mapend);
-		if (mapstart > PAGE_OFFSET)
-			continue;	// page idle tracking is user mem only
-		if (mapidle(pid, mapstart, mapend)) {
-			printf("Error setting map %llx-%llx. Exiting.\n",
-			    mapstart, mapend);
-		}
-	}
-
-	fclose(mapsfile);
-
-	return 0;
 }
 
 int setidlemap()
@@ -265,31 +191,52 @@ int loadidlemap()
 
 int main(int argc, char *argv[])
 {
-	pid_t pid;
 	double duration, mbytes;
 	static struct timeval ts1, ts2, ts3, ts4;
 	unsigned long long set_us, read_us, dur_us, slp_us, est_us;
+	struct stat stat;
+	unsigned long long inode;
+	int first = 1, forever = 0;
+	int fd;
 
 	// options
 	if (argc < 3) {
-		printf("USAGE: wss PID duration(s)\n");
-		exit(0);
-	}	
+		fprintf(stderr, "USAGE: %s CGROUP_PATH duration(s) [forever]\n",
+			argv[0]);
+		exit(1);
+	}
 	if (getenv("DEBUG"))
 		g_debug = atoi(getenv("DEBUG"));
 	if (getenv("QUIET"))
-		g_quiet =1;
-
-	pid = atoi(argv[1]);
+		g_quiet = 1;
+	if (argc >= 4)
+		forever = strcmp(argv[3], "forever") == 0;
+	g_cgroup = argv[1];
+	fd = open(g_cgroup, O_RDONLY);
+	if (fd < 0) {
+		perror("could not open cgroup dir");
+		exit(1);
+	}
+	if (fstat(fd, &stat) < 0) {
+		perror("could not fstats cgroup dir\n");
+		close(fd);
+		exit(1);
+	}
+	inode = (unsigned long long)stat.st_ino;
+	close(fd);
 	duration = atof(argv[2]);
 	if (duration < 0.01) {
 		printf("Interval too short. Exiting.\n");
 		return 1;
 	}
 	if (!g_quiet)
-		printf("Watching PID %d page references during %.2f seconds...\n",
-		    pid, duration);
+		printf("Watching '%s'(inode %lu) page references during %.2f seconds...\n",
+		    g_cgroup, inode, duration);
 
+again:
+	g_activepages = 0;
+	g_walkedpages = 0;
+	g_totalpages = 0;
 	// set idle flags
 	gettimeofday(&ts1, NULL);
 	setidlemap();
@@ -301,7 +248,11 @@ int main(int argc, char *argv[])
 
 	// read idle flags
 	loadidlemap();
-	walkmaps(pid);
+	if (cgroupidle(inode) < 0) {
+		fprintf(stderr, "Error reading idle flags for cgroup.\n");
+		exit(1);
+	}
+
 	gettimeofday(&ts4, NULL);
 
 	// calculate times
@@ -322,15 +273,19 @@ int main(int argc, char *argv[])
 		// assume getpagesize() sized pages:
 		printf("referenced: %d pages, %d Kbytes\n", g_activepages,
 		    g_activepages * getpagesize());
-		printf("walked    : %d pages, %d Kbytes\n", g_walkedpages,
+		printf("walked    : %d pages, %ld Kbytes\n", g_walkedpages,
 		    g_walkedpages * getpagesize());
 	}
 
 	// assume getpagesize() sized pages:
 	mbytes = (g_activepages * getpagesize()) / (1024 * 1024);
-	if (!g_quiet)
-		printf("%-7s %10s\n", "Est(s)", "Ref(MB)");
-	printf("%-7.3f %10.2f\n", (double)est_us / 1000000, mbytes);
+	if (first && !g_quiet) {
+		printf("%-7s %10s %20s %20s\n", "Est(s)", "Ref(MB)", "Ref(Pages)", "Total(Pages)");
+		first = 0;
+	}
+	printf("%-7.3f %10.2f %20lu %20lu\n", (double)est_us / 1000000, mbytes, g_activepages, g_totalpages);
 
+	if (forever)
+		goto again;
 	return 0;
 }
