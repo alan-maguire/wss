@@ -1,4 +1,4 @@
-# Working set size estimation redux
+# Working set size estimation on Linux redux
 
 Here we revisit [the work Brendan did](./README_orig.md)
 on working-set size estimation, comparing the approach used there
@@ -18,7 +18,7 @@ All methods are carried out on a per-cgroup basis because
 - containers/VMs use cgroups and we want to have a method that
   can capture their memory utilization; and
 - we can simply lauch a process in a cgroup via cgexec if we
-  want to test that, so we can support fine-grained tracking of
+  want to test that, so we can still support fine-grained tracking of
   workloads if needed.
   
 # Resident Set Size (RSS) versus Working Set Size (WSS)
@@ -118,8 +118,8 @@ If we now configure testmem differently, it will
 
 1. allocate 65536 pages (RSS)
 2. touch every 4
-3. wait 10s
-4. touch every 4 pages again
+3. wait a specified number of seconds (in this case 0)
+3. touch every 4 pages again
 
 and so on.
 
@@ -154,7 +154,8 @@ we marked it as idle.
 
 ## How do I use it?
 
-Idle page tracking requires a kernel built with
+[Idle page tracking](https://docs.kernel.org/admin-guide/mm/idle_page_tracking.html)
+requires a kernel built with
 
 ```
 CONFIG_PAGE_IDLE_FLAG=y
@@ -189,14 +190,19 @@ So it has inode number 23683; now we know every page frame number in
 
 So putting these two pieces together, we can
 
-- mark all pages as idle
+- mark all pages as idle by writing to idle page map
 - wait for interval
-- after interval, examine all pfns associated with the cgroup to see if idle
+- after interval, read back idle page map into memory; then
+- examine all pfns associated with the cgroup to see if associated idle
   bits were switched off; this gives us the number of pages accessed in the
   interval
 - repeat
 
 This is what the main loop in [wss-v3.c](./wss-v3.c) does.
+
+[wss-v2.c](./wss-v2.c) was similar, except it had to utilize mappings
+in `/proc/<pid>/map`, translating them into pfns to determine per-process
+page utilization.
 
 ## What are the overheads?
 
@@ -209,13 +215,147 @@ There are overheads associated with
 Unfortunately we need to set/read idle flags on all memory with this approach as
 pages may be added to the workload dynamically during its operation via
 `malloc()`, loading libraries etc.  Similarly we need to read the entire
-kpagecgroup map.
+kpagecgroup map to ensure we find all pfns associated with the cgroup.
 
 # 2. Multi-generational LRU
 
 ## What is it?
 
+[Multi-generational LRU](https://docs.kernel.org/admin-guide/mm/multigen_lru.html)
+is a Least Recently Used (LRU) method for optimizing page reclaim, especially
+when we are under memory pressure.
+
+In general with page accesses we need to represent how recently the page has
+been accessed, as this can be used to drive page reclaim when under pressure.
+
+Multi-generational LRU incorporates the concept of generations into recency
+measure; older generations are considered cold pages potentially eligible
+for reclaim.  If a page is accessed it is promoted to a younger generation.
+
+So if we can observe the generation stats for a set of pages, we can
+determine the working set size.
+
+Happily LRU already collects stats by generation on a per-cgroup basis,
+so we do not need to do extra work to extract these.
+
 ## How do I use it?
+
+It requires the kernel to be built with
+
+```
+CONFIG_LRU_GEN=y
+CONFIG_LRU_GEN_ENABLED=y
+```
+
+`/sys/kernel/mm/lru_gen` should be present if this is the case.
+
+First to enable muti-generational LRU, the documentation tells us to
+
+```
+$ echo y >/sys/kernel/mm/lru_gen/enabled
+```
+
+It provides breakdowns of page accesses, both anonymous and file-backed
+per generation and also breaks down results by cgroup.  There is a catch
+though which we need to explain before we move on to taking measurements.
+
+There are a few different modes of multi-gen LRU operation, and for accurate
+working set size estimation we need to understand them.  As well as
+supporting 'y', we can specify any combination of:
+
+- 0x1: switch multi-gen LRU on
+- 0x2: large batch access bit clearing for leaf page tables
+- 0x4: clear access bit in non-leaf page tables as well
+
+For WSS estimation the key point is this: modes 0x2/0x4 will give us
+less fine-grained WSS estimations since the access bits are handled
+at a higher level than the individual page.
+
+So instead of using 'y' (all of the above) we will 
+
+```
+$ echo 0x1 >/sys/kernel/mm/lru_gen/enabled
+```
+
+Below we observe cgroup stats before and after running `testmem` accessing every
+4th page of 65536 pages (i.e. 16384 pages).  No other processes were running
+for the cgroup.
+
+```
+$ tail -5 /sys/kernel/debug/lru_gen
+tail -5 /sys/kernel/debug/lru_gen
+ node     0
+         84     639744          0           4 
+         85     585557          0           0 
+         86     557060          0           0 
+         87     553680          0           0 
+$ cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1 & 
+[1] 780669
+$ tail -5 /sys/kernel/debug/lru_gen
+ node     0
+         84     771206          0           4 
+         85     717019          0           0 
+         86     688522      18712           0 
+         87     685142          0           0 
+```
+
+We see that for generation 86, there were 18712 anonymous (non file-backed)
+accesses.  But here comes the interesting part; we can trigger a new
+generation!  By doing the following:
+
+```
+$ echo "+110 0 87 0 0" > /sys/kernel/debug/lru_gen
+```
+
+we are saying create a new generation max_gen_nr+1 (where max_gen_nr is 87
+in this case) for the cgroup (110), node id 0. The trailing 0s specify
+respectively
+
+- do not force a scan of the anon pages when swap is off
+- reduce overhead with an associated reduction in accuracy
+
+Now the lru_gen output looks like this:
+
+```
+tail -5 /sys/kernel/debug/lru_gen
+ node     0
+         85     783266          0           4 
+         86     754769      18712           0 
+         87     751389          0           0 
+         88       3553          0           0 
+```
+
+Now generation 86 is approaching being the oldest generation; if we again
+add a new generation:
+
+```
+$ echo "+110 0 88 0 0" > /sys/kernel/debug/lru_gen
+$ tail -5 /sys/kernel/debug/lru_gen
+ node     0
+         86     877528      18712           4 
+         87     874148          0           0 
+         88     126312          0           0 
+         89       2647          0           0 
+```
+
+And with one more generation added, the pages age out:
+
+```
+$ echo "+110 0 89 0 0" > /sys/kernel/debug/lru_gen
+$  tail -5 /sys/kernel/debug/lru_gen
+ node     0
+         87     948565          0           4 
+         88     200729          0           0 
+         89      77064          0           0 
+         90       3493      18712           0 
+```
+Now we see the latest generation 90 has the page accesses associated
+with our program since the old accesses aged out.
+
+So this sketches out the technique; for the a multi-generational
+LRU with N generations, age out the current set of N generations;
+after doing so the latest generation will then give us an indication 
+of current working set size.
 
 ## What are the overheads?
 
@@ -223,7 +363,8 @@ kpagecgroup map.
 
 ## What is it?
 
-Pressure Stall Information was introduced in the 5.1 kernel with
+[Pressure Stall Information](https://docs.kernel.org/accounting/psi.html)
+was introduced in the 5.1 kernel with
 
 ```
 commit 0e94682b73bfa6c44c98af7a26771c9c08c055d5
@@ -297,8 +438,22 @@ boot command line to switch it on.
 PSI covers CPU, I/O and memory pressure.  Here we will be concerned with
 memory pressure exclusively.
 
+Note that pressure stall will not directly answer the question "how big
+is the working set size of my workload?" Instead it will answer the question
+"is my workload being impacted by memory pressure?" That is often the key
+question we want to answer for a system, and it is often why we want to
+estimate working set size in the first place. 
+
+The upshot of this is we will not get an apples-with-apples comparison
+between PSI and methods that directly determine WSS.  So when benchmarking
+the pertinent question is this - is PSI as effective at diagnosing memory
+pressure for workloads as estimating workload WSS and determining if it
+will place the system under memory pressure?
+
 ## What are the overheads?
 
+Overheads were estimated at approximately 1%, but work done since it landed
+initially have reduced that somewhat.
 
 # Benchmarking the approaches
 
