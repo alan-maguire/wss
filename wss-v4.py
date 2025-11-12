@@ -28,6 +28,8 @@ def parse_args():
 
     parser.add_argument('-c', '--cgroup', required=True, type=str,
                         help='cgroup_path')
+    parser.add_argument('-q', '--quiet', required=False, action='store_true',
+                        help='quiet mode')
     parser.add_argument('-i', '--interval', required=False, type=int,
                         default=10, help='interval_secs')
     parser.add_argument('-f', '--forever', required=False, action='store_true',
@@ -89,6 +91,9 @@ def parse_lru_gen(cgroup_name):
     except IOError:
             print('Could not read lru gen file; ensure run via sudo + CONFIG_LRU_GEN is enabled for your kernel')
     f.close()
+    if cgroup_id == 0:
+        print('Could not find cgroup ' + cgroup_name)
+        exit(1)
     return cgroup_id, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file
 
 def write_lru_gen(cgroup_id, cgroup_lastgen):
@@ -112,7 +117,8 @@ def main(args):
               "->", cgroup_lastgen, ") anon pages:", cgroup_anon,
               "file pages:", cgroup_file)
     cols=[ 'Est(s)', 'Ref(MB)', 'Ref(Pages)', 'Gen']
-    print(f'{cols[0]:>7} {cols[1]:>10} {cols[2]:>20} {cols[3]:>20}')
+    if (args.quiet == False):
+        print(f'{cols[0]:>7} {cols[1]:>10} {cols[2]:>20} {cols[3]:>20}')
 
     while True:
         start = time.time()
@@ -133,12 +139,12 @@ def main(args):
         total_file = sum(cgroup_file)
         total = total_anon + total_file
         total_pages = str(total)
-        total_mb = str(round(total*pagesize/mb))
+        total_mb = str(round(total*pagesize/mb, 2))
         if (args.breakdown):
             for i in range(cgroup_gens):
                 gen_total = cgroup_anon[i] + cgroup_file[i]
                 gen_pages = str(gen_total)
-                gen_mb = str(round(gen_total*pagesize/mb))
+                gen_mb = str(round(gen_total*pagesize/mb, 2))
                 gen=str(cgroup_lastgen - cgroup_gens + 1 + i)
                 print(f'{time_taken:>7} {gen_mb:>10} {gen_pages:>20} {gen:>20}')
         else:

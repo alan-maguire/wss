@@ -22,12 +22,14 @@ for p in 1024 2048 4096 ; do
 	cgexec -g memory:foo ./testmem $p 1 0 >/dev/null 2>&1 &
 	TESTMEM=$!
 	#echo $TESTMEM > ${CGROUP_TEST}/cgroup.procs
-	V2OUT=$(./wss-v2 $TESTMEM 10 | awk '{print $2}')
-	V3OUT=$(./wss-v3 $CGROUP_TEST 10 | awk '{print $2}')
+	V2OUT=$(./wss-v2 $TESTMEM 10 | awk '{print $1 "\t" $2}')
+	V3OUT=$(./wss-v3 $CGROUP_TEST 10 | awk '{print $1 "\t" $2}')
+	V4OUT=$(./wss-v4.py -q -c $CGROUP_TEST | awk '{print $1 "\t" $2}')
 	kill $TESTMEM 2>/dev/null
 	wait $TESTMEM 2>/dev/null
-	echo "v2 Mb (per-pid):	$V2OUT"
-	echo "v3 Mb (per-cgroup):	$V3OUT"
+	echo "v2 Est(s), Mb (per-pid):	$V2OUT"
+	echo "v3 Est(s), Mb (per-cgroup):	$V3OUT"
+	echo "v4 Est(s), Mb (per-cgroup):	$V4OUT"
 	sleep 0.5
 done
 

@@ -611,10 +611,11 @@ initially have reduced that somewhat.
 
 Here we will compare the various approaches.
 
-## Per-process versus per-cgroup idle page tracking
+## Per-process versus per-cgroup idle page tracking versus multi-gen LRU
 
 First however we want to make sure that the wss-v2 (per-pid) and wss-v3
-(per-cgroup) give the same results using the idle page tracking approach.
+(per-cgroup) give the same results using the idle page tracking approach,
+and compare these with the wss-v4 multi-gen LRU approach.
 
 We test this via testwss.sh, which
 creates a cgroup for the [testmem](./testmem.c) program; it allocates
@@ -635,23 +636,44 @@ will allocate 2048 pages in a loop, touching every one and not sleep()ing
 between iterations.
 
 Using the testmem program run in a memory cgroup, we can compare per-process
-results from wss-v2 to per-cgroup from wss-v3 for the same workload:
+results from wss-v2 to per-cgroup from wss-v3 to the wss-v4 per-cgroup
+multi-gen LRU tracking approach.  For each approach we collect the
+Est(s) estimated time taken to monitor _and_ collect the data, and also
+collect the estimate in Mb.  This will allow us to compare collection
+overheads and accuracy.  This is done for 1024, 2048 and 4096 pages, and
+we expect to see 4, 8 and 16Mb for accessed pages.
 
 ```
 $ sudo bash testwss.sh 
 Testing for 1024 pages (4 Mb)
-v2 Mb (per-pid):	4.00
-v3 Mb (per-cgroup):	4.00
+v2 Est(s), Mb (per-pid):	11.607 4.00
+v3 Est(s), Mb (per-cgroup):	11.630 4.00
+v4 Est(s), Mb (per-cgroup):	10.0129 4.1
 Testing for 2048 pages (8 Mb)
-v2 Mb (per-pid):	8.00
-v3 Mb (per-cgroup):	8.00
+v2 Est(s), Mb (per-pid):	11.908 8.00
+v3 Est(s), Mb (per-cgroup):	11.832 8.00
+v4 Est(s), Mb (per-cgroup):	10.0118 8.09
 Testing for 4096 pages (16 Mb)
-v2 Mb (per-pid):	16.00
-v3 Mb (per-cgroup):	16.00
+v2 Est(s), Mb (per-pid):	11.943 16.00
+v3 Est(s), Mb (per-cgroup):	11.929 16.00
+v4 Est(s), Mb (per-cgroup):	10.0084 16.09
 ```
 
 So we see that both wss-v2 and wss-v3 give identical results when doing
-idle page tracking per-process versus per-cgroup.
+idle page tracking per-process versus per-cgroup.  Multi-generational
+LRU gives a slight over-estimate, but notably the overhead in results
+collection is much smaller - approximately 10msec - versus 1.6 seconds
+to collect and cross-reference idle page info.
 
-## Per-cgroup idle page tracking versus multi-generational LRU
+## Comparing PSI to WSS estimation
 
+PSI is not a method for estimating WSS, rather it is a method for
+determining if the workload is waiting for resources.  As such it
+is not possible to do an apples-with-apples comparison to the other
+WSS estimation techniques.  Rather what we would like to see is how
+PSI measurements respond to various ranges of memory pressure and 
+compare the data gathered to that from our WSS estimators.  This will
+allow us to see how a specified amount of memory pressure is quantified
+in PSI, and how that relates to the measured WSS.
+
+XXX to do
