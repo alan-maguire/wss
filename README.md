@@ -386,6 +386,68 @@ LRU with N generations, age out the current set of N generations;
 after doing so the latest generation will then give us an indication 
 of current working set size.
 
+[wss-v4.py](./wss-v4.py) implements this approach; given a
+cgroup path ('-c cgroup_path') it will age out the current
+set of generations gradually over an interval.  It uses the number
+of generations as the basis for figuring out when to age out,
+so for example for a 10 second interval with 4 generations it will
+age out a generation every 2.5 seconds.  Different intervals are
+configurable via '-i interval_in_seconds', and we can breakdown
+by generations with the '-b' argument.  The full options are as
+follows:
+
+```
+$ $ sudo ./wss-v4.py --help
+usage: Workings set size estimator using Multi-Generational LRU
+       [-h] -c CGROUP [-i INTERVAL] [-f] [-b] [-d]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -c CGROUP, --cgroup CGROUP
+                        cgroup_path
+  -i INTERVAL, --interval INTERVAL
+                        interval_secs
+  -f, --forever         run forever
+  -b, --breakdown       breakdown by generation
+  -d, --debug           debug mode
+```
+
+So for example, we can run it while we have our testmem program
+running:
+
+```
+$ cgexec -g memory:foo ./testmem 65536 4 0 >/dev/null 2>&1 &
+[1] 900006
+$ tail -6 /sys/kernel/debug/lru_gen
+memcg   110 /foo
+ node     0
+        242     317484          0           0 
+        243     314982          0           0 
+        244     312480      16792           4 
+        245     309978          0           0 
+$ sudo ./wss-v4.py -c /sys/fs/cgroup/memory/foo 
+ Est(s)    Ref(MB)           Ref(Pages)                  Gen
+10.0111         66                16796             246->249
+```
+
+We can breakdown accesses by generation too; this is useful in
+exploring access dynamics over the course of the 10 sec interval:
+
+```
+$ sudo ./wss-v4.py -c /sys/fs/cgroup/memory/foo -b
+ Est(s)    Ref(MB)           Ref(Pages)                  Gen
+10.0105          0                    4                  250
+10.0105          0                    0                  251
+10.0105         66                16790                  252
+10.0105          0                    2                  253
+```
+
+As mentioned above, we spawn a new generation each 2.5 seconds
+in the default 10 second interval, so we get a picture here
+not only of which pages were accessed, but also when.  In the case
+of our program which is a tight loop accessing pages, nearly all
+fall into the same generation.
+
 ## How accurate is it?
 
 We see above that the accuracy is not as fine-grained as idle page tracking;
