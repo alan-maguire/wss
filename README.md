@@ -386,13 +386,6 @@ LRU with N generations, age out the current set of N generations;
 after doing so the latest generation will then give us an indication 
 of current working set size.
 
-We might ask this: why are the pages accessed by our application not
-always in the latest generation? XXX check this! From reading the documentation
-it appears that multi-generational LRU does its best to avoid walking
-each page, starting with page table entries (PTEs) when assessing
-recency.  Fine-grained checking only happens on reclaim when pages age
-out.
-
 ## How accurate is it?
 
 We see above that the accuracy is not as fine-grained as idle page tracking;
