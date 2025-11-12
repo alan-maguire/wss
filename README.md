@@ -484,6 +484,33 @@ are overheads there too.  However given that reclaim is targeted to a
 specific cgroup and that multi-generational LRU utilizes page table-based
 reclaim to avoid overheads these should be reasonably small.
 
+Notice that the time taken for aging out the generations in wss-v4.py
+is only very slightly more than the interval time (10sec):
+
+```
+$ sudo ./wss-v4.py -c /sys/fs/cgroup/memory/foo 
+ Est(s)    Ref(MB)           Ref(Pages)                  Gen
+  10.01         64                16408             242->245
+```
+
+It only takes an additional 10msec - aside from the wait time of 10sec -
+to age out the generations and collect the multigenerational LRU info.
+
+Contrast this with the idle page tracking approach utilized by
+[wss-v3.c](./wss-v3.c) which takes over a second
+to rescan idle page tables, map from page to cgroup etc:
+
+```
+$ sudo ./wss-v3 /sys/fs/cgroup/memory/foo 10
+Watching '/sys/fs/cgroup/memory/foo'(inode 23683) page references during 10.00 seconds...
+Est(s)     Ref(MB)           Ref(Pages)         Total(Pages)
+11.823       64.00                16542                16552
+```
+
+We also do not get a sense of the time dynamics of accesses with the
+idle page tracking approach; with idle page tracking we just know that
+it was accessed sometime between when we set idle flags and checked them.
+
 # 3. Pressure Stall Information (PSI)
 
 ## What is it?
