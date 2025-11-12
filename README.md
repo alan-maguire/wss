@@ -408,8 +408,8 @@ working set size.
 The documentation states that multi-generational LRU can induce overheads
 for some workloads which can be mitigated by enabling clearing accessed
 bits on leaf/non-leaf page tables (flags 0x2, 0x4 for
-/sys/kernel/mmu/lru_gen/enabled).  However enabling these reduces accuracy of
-working set size measurements considerably, so consider the tradeoffs here.
+/sys/kernel/mmu/lru_gen/enabled).  As a result we switched all flags on,
+and saw high accuracy regardless.
 
 Similarly when aging out generations, the final parameter (force_scan)
 can be set to 0 to reduce overhead, again having a smaller impact on accuracy.
@@ -418,7 +418,9 @@ so in our explorations we stuck with force_scan=0.
 
 When we forcibly age out the generations to update our working set size
 estimate, page reclaim needs to run on the oldest generation, so there
-are overheads there too.
+are overheads there too.  However given that reclaim is targeted to a
+specific cgroup and that multi-generational LRU utilizes page table-based
+reclaim to avoid overheads these should be reasonably small.
 
 # 3. Pressure Stall Information (PSI)
 
