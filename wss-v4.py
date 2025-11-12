@@ -96,6 +96,14 @@ def parse_lru_gen(cgroup_name):
         exit(1)
     return cgroup_id, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file
 
+def init_lru_gen():
+    try:
+        with open('/sys/kernel/mm/lru_gen/enabled', 'w') as f:
+            f.write('y')
+            f.close()
+    except IOError:
+            print('Could not write lru gen file; ensure run via sudo + CONFIG_LRU_GEN is enabled for your kernel')
+
 def write_lru_gen(cgroup_id, cgroup_lastgen):
     try:
         with open('/sys/kernel/debug/lru_gen', 'w') as f:
@@ -110,6 +118,7 @@ def main(args):
     cgroup_name = '/' + os.path.basename(cgroup)
     pagesize = 4096
     mb = 1024 * 1024
+    init_lru_gen()
     cgroup_id, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
     if (args.debug):
         print("cgroup", cgroup_name, "id", cgroup_id,

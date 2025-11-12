@@ -123,8 +123,7 @@ If we now configure testmem differently, it will
 
 and so on.
 
-In that case, for step 1, WSS again matches RSS for a narrow window.
-But by step 4, our WSS measurements should be around 1/4 the size of our RSS,
+In this case our WSS measurements should be around 1/4 the size of our RSS,
 since we only touch 1 in 4 pages.
 
 

@@ -5,18 +5,22 @@
 
 int main(int argc, char *argv[])
 {
-	int pagesize = getpagesize();
-	unsigned long i, accesspattern, accessed, numpages;
-	struct timeval ts1, ts2;
+	unsigned long i, accesspattern, accessed, numpages, set, unset;
 	int delay = 0, iters = -1, repeat = 0;
+	int pagesize = getpagesize();
+	struct timeval ts1, ts2;
 	unsigned long dur_us;
 	char *mem = NULL;
+	int quiet = 0;
+	int debug = 0;
 
 	if (argc < 3) {
 		fprintf(stderr, "Usage: %s numpages access_pattern [delay(sec)] [iters]\n",
 			argv[0]);
 		return 1;
 	}
+	debug = getenv("DEBUG") != NULL;
+	quiet = getenv("QUIET") != NULL;
 	numpages = atoi(argv[1]);
 	accesspattern = atoi(argv[2]);
 	if (argc > 3) {
@@ -33,22 +37,27 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	printf("%10s %20s\n", "Est(us)", "PagesAccessed");
+	if (!quiet)
+		printf("%10s %20s %20s %20s\n", "Est(us)", "PagesAccessed", "Set", "Unset");
 again:
-	accessed = 0;
+	accessed = set = unset = 0;
 	gettimeofday(&ts1, NULL);
 	for (i = 0; i < numpages; i+= accesspattern) {
-		if (!mem[(i * pagesize)])
+		if (!mem[(i * pagesize)]) {
 			mem[(i * pagesize)]++;
-		else
+			set++;
+		} else {
 			mem[(i * pagesize)]--;
+			unset++;
+		}
 		accessed++;
 	}
 	gettimeofday(&ts2, NULL);
 	dur_us = 1000000 * (ts2.tv_sec - ts1.tv_sec) +
 		(ts2.tv_usec - ts1.tv_usec);
 
-	printf("%10lu %20lu\n", dur_us, accessed);
+	if (!quiet)
+		printf("%10lu %20lu %20lu %20lu\n", dur_us, accessed, set, unset);
 	if (repeat && (iters == -1 || --iters > 0)) {
 		sleep(delay);
 		goto again;
