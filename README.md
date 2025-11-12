@@ -204,6 +204,14 @@ This is what the main loop in [wss-v3.c](./wss-v3.c) does.
 in `/proc/<pid>/map`, translating them into pfns to determine per-process
 page utilization.
 
+## How accurate is it?
+
+Accuracy is high here, idle page tracking gets us to page-level granularity
+for the interval measured.  We can see the numbers above match very closely
+the projected working set size based on a synthetic workload.  There are some
+caveats to consider with idle page tracking:
+
+
 ## What are the overheads?
 
 There are overheads associated with
@@ -216,6 +224,13 @@ Unfortunately we need to set/read idle flags on all memory with this approach as
 pages may be added to the workload dynamically during its operation via
 `malloc()`, loading libraries etc.  Similarly we need to read the entire
 kpagecgroup map to ensure we find all pfns associated with the cgroup.
+
+The read/write of the idle page map requires read()ing/write()ing to
+/sys/kernel/mm/page_idle/bitmap in 8 byte chunks, and there are
+(total_memory_pages/64) of these. For a 1Tb memory system, this equates to
+`(10^12/4096/8) = 30517578` read/write system calls.  Similarly a read
+of kpagecgroup will be expensive since there are 8 bytes per page; thankfully
+in that case we can do larger chunked reads.
 
 # 2. Multi-generational LRU
 
@@ -267,14 +282,12 @@ supporting 'y', we can specify any combination of:
 - 0x2: large batch access bit clearing for leaf page tables
 - 0x4: clear access bit in non-leaf page tables as well
 
-For WSS estimation the key point is this: modes 0x2/0x4 will give us
-less fine-grained WSS estimations since the access bits are handled
-at a higher level than the individual page.
-
-So instead of using 'y' (all of the above) we will 
+For WSS estimation we observed good accuracy with all modes enabled,
+and given that the overheads are reduced with modes 0x2/0x4 enabled,
+using 'y' makes sense here.
 
 ```
-$ echo 0x1 >/sys/kernel/mm/lru_gen/enabled
+$ echo y >/sys/kernel/mm/lru_gen/enabled
 ```
 
 Below we observe cgroup stats before and after running `testmem` accessing every
@@ -282,32 +295,42 @@ Below we observe cgroup stats before and after running `testmem` accessing every
 for the cgroup.
 
 ```
-$ tail -5 /sys/kernel/debug/lru_gen
-tail -5 /sys/kernel/debug/lru_gen
+$ tail -6 /sys/kernel/debug/lru_gen
+memcg   110 /foo
  node     0
-         84     639744          0           4 
-         85     585557          0           0 
-         86     557060          0           0 
-         87     553680          0           0 
-$ cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1 & 
-[1] 780669
-$ tail -5 /sys/kernel/debug/lru_gen
+        104     209928          0           4 
+        105     147816          0           0 
+        106     144446          0           0 
+        107     141762          0           0 
+$ cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1 &
+[1] 862190
+$ tail -6 /sys/kernel/debug/lru_gen
+memcg   110 /foo
  node     0
-         84     771206          0           4 
-         85     717019          0           0 
-         86     688522      18712           0 
-         87     685142          0           0 
+        104     253197          0           4 
+        105     191085          0           0 
+        106     187715      16408           0 
+        107     185031          0           0 
 ```
 
-We see that for generation 86, there were 18712 anonymous (non file-backed)
-accesses.  But here comes the interesting part; we can trigger a new
+We see that for generation 106, there were 16408 anonymous (non file-backed)
+accesses; this matches closely our expected ~16384 (65536/4).
+
+The oldest generation (104) contains the coldest pages, which were accessed
+at least 253197msec ago o
+87 contains the hottest.  We can also see this by looking at the second
+column which tells us that the pages in the generation have been accessed
+in the last n msec; so for gen 84 they have been accessed in the last
+771206msec, generation 85 in the last 717019msec, etc.
+
+But here comes the interesting part; we can trigger a new
 generation!  By doing the following:
 
 ```
-$ echo "+110 0 87 0 0" > /sys/kernel/debug/lru_gen
+$ echo "+110 0 107 0 0" > /sys/kernel/debug/lru_gen
 ```
 
-we are saying create a new generation max_gen_nr+1 (where max_gen_nr is 87
+we are saying create a new generation max_gen_nr+1 (where max_gen_nr is 107
 in this case) for the cgroup (110), node id 0. The trailing 0s specify
 respectively
 
@@ -317,47 +340,82 @@ respectively
 Now the lru_gen output looks like this:
 
 ```
-tail -5 /sys/kernel/debug/lru_gen
+$ tail -6 /sys/kernel/debug/lru_gen
+memcg   110 /foo
  node     0
-         85     783266          0           4 
-         86     754769      18712           0 
-         87     751389          0           0 
-         88       3553          0           0 
+        105     385350          0           4 
+        106     381980      16406           0 
+        107     379296          2           0 
+        108       1776          0           0 
+
 ```
 
-Now generation 86 is approaching being the oldest generation; if we again
+Now generation 106 is approaching being the oldest generation; if we again
 add a new generation:
 
 ```
-$ echo "+110 0 88 0 0" > /sys/kernel/debug/lru_gen
-$ tail -5 /sys/kernel/debug/lru_gen
+$ echo "+110 0 108 0 0" > /sys/kernel/debug/lru_gen
+$ tail -6 /sys/kernel/debug/lru_gen
+memcg   110 /foo
  node     0
-         86     877528      18712           4 
-         87     874148          0           0 
-         88     126312          0           0 
-         89       2647          0           0 
+        106     398559      16401           4 
+        107     395875          2           0 
+        108      18355          5           0 
+        109       1100          0           0 
 ```
 
 And with one more generation added, the pages age out:
 
 ```
-$ echo "+110 0 89 0 0" > /sys/kernel/debug/lru_gen
-$  tail -5 /sys/kernel/debug/lru_gen
+$ echo "+110 0 109 0 0" > /sys/kernel/debug/lru_gen
+$ tail -5 /sys/kernel/debug/lru_gen
+memcg   110 /foo
  node     0
-         87     948565          0           4 
-         88     200729          0           0 
-         89      77064          0           0 
-         90       3493      18712           0 
+        107     404750          2           4 
+        108      27230          0           0 
+        109       9975          5           0 
+        110       2113      16401           0 
 ```
+
 Now we see the latest generation 90 has the page accesses associated
-with our program since the old accesses aged out.
+with our program since the old accesses aged out and page reclaim
+ran on them, discovering they were still in use. Hence the promotion
+to the latest generation.
 
 So this sketches out the technique; for the a multi-generational
 LRU with N generations, age out the current set of N generations;
 after doing so the latest generation will then give us an indication 
 of current working set size.
 
+We might ask this: why are the pages accessed by our application not
+always in the latest generation? XXX check this! From reading the documentation
+it appears that multi-generational LRU does its best to avoid walking
+each page, starting with page table entries (PTEs) when assessing
+recency.  Fine-grained checking only happens on reclaim when pages age
+out.
+
+## How accurate is it?
+
+We see above that the accuracy is not as fine-grained as idle page tracking;
+we get ~16400 page accesses for our testmem program where given the synthetic
+workload we should see closer to 16384.  However that is pretty close!
+
 ## What are the overheads?
+
+The documentation states that multi-generational LRU can induce overheads
+for some workloads which can be mitigated by enabling clearing accessed
+bits on leaf/non-leaf page tables (flags 0x2, 0x4 for
+/sys/kernel/mmu/lru_gen/enabled).  However enabling these reduces accuracy of
+working set size measurements considerably, so consider the tradeoffs here.
+
+Similarly when aging out generations, the final parameter (force_scan)
+can be set to 0 to reduce overhead, again having a smaller impact on accuracy.
+We did not observe any differences in accuracy for force_scan=1 versus 0,
+so in our explorations we stuck with force_scan=0.
+
+When we forcibly age out the generations to update our working set size
+estimate, page reclaim needs to run on the oldest generation, so there
+are overheads there too.
 
 # 3. Pressure Stall Information (PSI)
 
