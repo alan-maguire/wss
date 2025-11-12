@@ -56,10 +56,10 @@ test()
 	echo "$wsscmd Est(s), Mb (per-pid):  $OUT"
 }
 
-# do not emit headers from wss scripts
+# do not emit headers from wss c progs
 export QUIET=1
 for q in 1 4; do
-    for p in 1024 2048 4096 ; do
+    for p in 4096 65536; do
 	test $p $q wss-v2
 	test $p $q wss-v3
 	test $p $q wss-v4
