@@ -316,12 +316,11 @@ memcg   110 /foo
 We see that for generation 106, there were 16408 anonymous (non file-backed)
 accesses; this matches closely our expected ~16384 (65536/4).
 
-The oldest generation (104) contains the coldest pages, which were accessed
-at least 253197msec ago o
-87 contains the hottest.  We can also see this by looking at the second
+The oldest generation (104) contains the coldest pages, while generation
+107 contains the hottest.  We can also see this by looking at the second
 column which tells us that the pages in the generation have been accessed
-in the last n msec; so for gen 84 they have been accessed in the last
-771206msec, generation 85 in the last 717019msec, etc.
+in the last n msec; so for gen 104 they have been accessed in the last
+253197msec, generation 105 in the last 191085mec, etc.
 
 But here comes the interesting part; we can trigger a new
 generation!  By doing the following:
@@ -377,7 +376,7 @@ memcg   110 /foo
         110       2113      16401           0 
 ```
 
-Now we see the latest generation 90 has the page accesses associated
+Now we see the latest generation 110 has the page accesses associated
 with our program since the old accesses aged out and page reclaim
 ran on them, discovering they were still in use. Hence the promotion
 to the latest generation.
@@ -399,6 +398,17 @@ out.
 We see above that the accuracy is not as fine-grained as idle page tracking;
 we get ~16400 page accesses for our testmem program where given the synthetic
 workload we should see closer to 16384.  However that is pretty close!
+
+We might ask this: why are the pages accessed by our application not
+always in the latest generation? XXX check this! From reading the documentation
+it appears that multi-generational LRU does its best to avoid walking
+each page, starting with page table entries (PTEs) when assessing
+recency.  Fine-grained checking only happens on reclaim when pages age
+out; in our case we then discover they are still in use and get promoted.
+
+So we age out the generations in order to discover if (what appear to be) cold
+pages are in fact still in use, and using this technique we can discover the
+working set size.
 
 ## What are the overheads?
 
