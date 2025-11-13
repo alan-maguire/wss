@@ -5,6 +5,7 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/prctl.h>
 
 int main(int argc, char *argv[])
 {
@@ -33,6 +34,11 @@ int main(int argc, char *argv[])
 	if (argc > 4)
 		iters = atoi(argv[4]);
 
+	if (prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0) < 0) {
+		fprintf(stderr, "could not disable transparent hugepages: %s\n",
+			strerror(errno));
+		return 1;
+	}
 	mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_LOCKED, -1, 0);
 	if (mem == MAP_FAILED) {
 		fprintf(stderr, "cannot allocate %d pages (%s); exiting\n",
