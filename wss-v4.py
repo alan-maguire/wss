@@ -46,6 +46,7 @@ def parse_lru_gen(cgroup_name):
     cgroup_id = 0
     cgroup_gens = 0
     cgroup_lastgen = 0
+    cgroup_nodes = 0
     cgroup_anon = []
     cgroup_file = []
     try:
@@ -54,6 +55,7 @@ def parse_lru_gen(cgroup_name):
 
             id = 0
             i = 1
+            memindex = 0
             for line in lines:
                 line = line.strip()
                 data = line.split()
@@ -66,6 +68,9 @@ def parse_lru_gen(cgroup_name):
                 if (id > 0):
                    # skip node lines
                    if (data[0] == 'node'):
+                       memindex = 0
+                       cgroup_gens = 0
+                       cgroup_nodes = cgroup_nodes + 1
                        continue
                    if (len(data) < 4):
                        continue
@@ -74,9 +79,18 @@ def parse_lru_gen(cgroup_name):
                    cgroup_gens = cgroup_gens + 1
                    canon=int(data[2])
                    cfile=int(data[3])
-                   cgroup_anon.append(canon)
-                   cgroup_file.append(cfile)
+                   if (len(cgroup_anon) <= memindex):
+                       cgroup_anon.append(canon)
+                   else:
+                       cgroup_anon[memindex] = cgroup_anon[memindex] + canon
+                   if (len(cgroup_file) <= memindex):
+                       cgroup_file.append(cfile)
+                   else:
+                       cgroup_file[memindex] = cgroup_file[memindex] + cfile
+                   memindex = memindex + 1
                    continue
+                # Look for line of form
+                # memcg id cgroupname
                 if (data[0] != 'memcg'):
                     continue
                 # reset id
@@ -94,7 +108,7 @@ def parse_lru_gen(cgroup_name):
     if cgroup_id == 0:
         print('Could not find cgroup ' + cgroup_name)
         exit(1)
-    return cgroup_id, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file
+    return cgroup_id, cgroup_nodes, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file
 
 def init_lru_gen():
     try:
@@ -104,10 +118,10 @@ def init_lru_gen():
     except IOError:
             print('Could not write lru gen file; ensure run via sudo + CONFIG_LRU_GEN is enabled for your kernel')
 
-def write_lru_gen(cgroup_id, cgroup_lastgen):
+def write_lru_gen(cgroup_id, node, cgroup_lastgen):
     try:
         with open('/sys/kernel/debug/lru_gen', 'w') as f:
-            cmd = '+' + str(cgroup_id) + ' 0 ' + str(cgroup_lastgen) + ' 0 0'
+            cmd = '+' + str(cgroup_id) + ' ' + str(node) + ' ' + str(cgroup_lastgen)
             f.write(cmd)
             f.close()
     except IOError:
@@ -119,9 +133,9 @@ def main(args):
     pagesize = 4096
     mb = 1024 * 1024
     init_lru_gen()
-    cgroup_id, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
+    cgroup_id, cgroup_nodes, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
     if (args.debug):
-        print("cgroup", cgroup_name, "id", cgroup_id,
+        print("cgroup", cgroup_name, "id", cgroup_id, "#nodes", cgroup_nodes,
               "gens (", cgroup_lastgen - cgroup_gens + 1,
               "->", cgroup_lastgen, ") anon pages:", cgroup_anon,
               "file pages:", cgroup_file)
@@ -132,10 +146,11 @@ def main(args):
     while True:
         start = time.time()
         for i in range(cgroup_gens):
-            write_lru_gen(cgroup_id, cgroup_lastgen)
+            for j in range(cgroup_nodes):
+                write_lru_gen(cgroup_id, j, cgroup_lastgen)
             time.sleep(args.interval/cgroup_gens)
             cgroup_lastgen = cgroup_lastgen + 1
-        _, _, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
+        _, _, _, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
         end = time.time()
         time_secs = end - start
         if (args.debug):
