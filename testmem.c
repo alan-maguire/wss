@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
 			strerror(errno));
 		return 1;
 	}
-	mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_LOCKED, -1, 0);
+	mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_POPULATE, -1, 0);
 	if (mem == MAP_FAILED) {
 		fprintf(stderr, "cannot allocate %d pages (%s); exiting\n",
 			numpages, strerror(errno));
