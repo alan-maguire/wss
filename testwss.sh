@@ -29,31 +29,37 @@ CGROUP_MEMORY=$CGROUP_BASE
 if [[ -d ${CGROUP_BASE}/memory ]]; then
 	CGROUP_MEMORY=${CGROUP_BASE}/memory
 fi
-CGROUP_TEST=${CGROUP_MEMORY}/foo
+export CGROUP_NAME=testwss.$$
+CGROUP_TEST=${CGROUP_MEMORY}/${CGROUP_NAME}
 
 test()
 {
 	pages=$1
 	proportion=$2
 	wsscmd=$3
+	rss_mb=$(($pages / 256 ))
 	expected_mb=$(($pages / ($proportion * 256)))
 
-	echo "Testing $wsscmd for 1/$proportion of $pages pages ($expected_mb Mb)"
+	echo "Testing $wsscmd for 1/$proportion of $pages pages ($expected_mb Mb WSS, $rss_mb Mb RSS)"
 	mkdir ${CGROUP_TEST}
-	cgexec -g memory:foo ./testmem $pages $proportion 0 > /dev/null 2>&1 &
+	cgexec -g memory:${CGROUP_NAME} ./testmem $pages $proportion 0 > /dev/null 2>&1 &
 	TESTMEM=$!
-	sleep 20
+	sleep 1
 	case $wsscmd in
 	"wss-v2")	WSSCMD="./wss-v2 $TESTMEM 10";;
 	"wss-v3")	WSSCMD="./wss-v3 $CGROUP_TEST 10";;
 	"wss-v4")	WSSCMD="./wss-v4.py -q -c $CGROUP_TEST -i 10";;
 	esac
 	OUT=$($WSSCMD | awk '{print $1 "\t" $2}')
+	RSSPAGES=$(cat /proc/${TESTMEM}/statm |awk '{print $2}')
+	RSS=$(( $RSSPAGES * 16 / 4096 ))
 	kill $TESTMEM 2>/dev/null
 	wait $TESTMEM 2>/dev/null
 	sleep 0.2
 	rmdir ${CGROUP_TEST}
-	echo "$wsscmd Est(s), Mb (per-pid):  $OUT"
+	echo "$wsscmd results:"
+	echo "Est(s) WSS(Mb)  RSS(Mb)"
+	echo "$OUT   $RSS"
 }
 
 # do not emit headers from wss c progs

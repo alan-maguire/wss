@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/mman.h>
+#include <errno.h>
+#include <string.h>
 
 int main(int argc, char *argv[])
 {
@@ -30,10 +33,10 @@ int main(int argc, char *argv[])
 	if (argc > 4)
 		iters = atoi(argv[4]);
 
-	mem = malloc(pagesize * numpages);
-	if (mem == NULL) {
-		fprintf(stderr, "cannot allocate %d pages; exiting\n",
-			numpages);
+	mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_LOCKED, -1, 0);
+	if (mem == MAP_FAILED) {
+		fprintf(stderr, "cannot allocate %d pages (%s); exiting\n",
+			numpages, strerror(errno));
 		return 1;
 	}
 

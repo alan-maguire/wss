@@ -17,9 +17,9 @@
 # Boston, MA 021110-1307, USA.
 #
 
-PROGS = wss-v1 wss-v2 wss-v3 testmem
-
-CFLAGS += -O0
+SRCS = $(wildcard *.c)
+PROGS = $(patsubst %.c,%,$(SRCS))
+CFLAGS += -O0 -g
 
 all: $(PROGS)
 	
