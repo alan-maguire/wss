@@ -677,29 +677,76 @@ multi-gen LRU tracking approach.  For each approach we collect the
 Est(s) estimated time taken to monitor _and_ collect the data, and also
 collect the estimate in Mb.  This will allow us to compare collection
 overheads and accuracy.  This is done for 1024, 2048 and 4096 pages, and
-we expect to see 4, 8 and 16Mb for accessed pages.
+we expect to see 4, 8 and 16Mb for accessed pages.  We also collect
+RSS measured from `/proc/$(pgrep testmem)/statm`.
+
+First we measure for RSS == WSS for 4096 and 65536 pages, then we
+measure for WSS == 1/4 of RSS (where we access every 4th page).
 
 ```
-$ sudo bash testwss.sh 
-Testing for 1024 pages (4 Mb)
-v2 Est(s), Mb (per-pid):	11.607 4.00
-v3 Est(s), Mb (per-cgroup):	11.630 4.00
-v4 Est(s), Mb (per-cgroup):	10.0129 4.1
-Testing for 2048 pages (8 Mb)
-v2 Est(s), Mb (per-pid):	11.908 8.00
-v3 Est(s), Mb (per-cgroup):	11.832 8.00
-v4 Est(s), Mb (per-cgroup):	10.0118 8.09
-Testing for 4096 pages (16 Mb)
-v2 Est(s), Mb (per-pid):	11.943 16.00
-v3 Est(s), Mb (per-cgroup):	11.929 16.00
-v4 Est(s), Mb (per-cgroup):	10.0084 16.09
+Testing wss-v2 for 1/1 of 4096 pages (16 Mb WSS, 16 Mb RSS)
+wss-v2 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.589	16.00   17
+Testing wss-v3 for 1/1 of 4096 pages (16 Mb WSS, 16 Mb RSS)
+wss-v3 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.659	16.00   17
+Testing wss-v4 for 1/1 of 4096 pages (16 Mb WSS, 16 Mb RSS)
+wss-v4 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.0136	16.02   17
+Testing wss-v2 for 1/1 of 65536 pages (256 Mb WSS, 256 Mb RSS)
+wss-v2 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.649	256.00   257
+Testing wss-v3 for 1/1 of 65536 pages (256 Mb WSS, 256 Mb RSS)
+wss-v3 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.740	256.00   257
+Testing wss-v4 for 1/1 of 65536 pages (256 Mb WSS, 256 Mb RSS)
+wss-v4 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.0496	256.02   257
+Testing wss-v2 for 1/4 of 4096 pages (4 Mb WSS, 16 Mb RSS)
+wss-v2 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.444	4.00   17
+Testing wss-v3 for 1/4 of 4096 pages (4 Mb WSS, 16 Mb RSS)
+wss-v3 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.495	4.00   17
+Testing wss-v4 for 1/4 of 4096 pages (4 Mb WSS, 16 Mb RSS)
+wss-v4 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.012	4.02   17
+Testing wss-v2 for 1/4 of 65536 pages (64 Mb WSS, 256 Mb RSS)
+wss-v2 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.631	64.00   257
+Testing wss-v3 for 1/4 of 65536 pages (64 Mb WSS, 256 Mb RSS)
+wss-v3 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.897	64.00   257
+Testing wss-v4 for 1/4 of 65536 pages (64 Mb WSS, 256 Mb RSS)
+wss-v4 results:
+Est(s) WSS(Mb)  RSS(Mb)
+10.0368	64.02   257
+
 ```
 
-So we see that both wss-v2 and wss-v3 give identical results when doing
-idle page tracking per-process versus per-cgroup.  Multi-generational
-LRU gives a slight over-estimate, but notably the overhead in results
-collection is much smaller - approximately 10msec - versus 1.6 seconds
-to collect and cross-reference idle page info.
+So we see that wss-v2, wss-v3 and wss-v4 give almost identical results
+for working set size; multi-generational LRU is out by 0.2Mb.
+They all distinguish RSS from WSS; where we access 1/4 of pages,
+all wss estimates notice this.
+
+In terms of overhead it takes an additional 0.5 seconds to collect
+the results for wss-v2 and wss-v3; this relates to the overheads
+associated with idle page tracking read discussed above.  Contrast
+this with wss-v4 however; since the multi-generational LRU tracking
+is how we age pages and the aggregation of page ages into generations
+is done in-kernel for us, the overheads are much lower - between
+10-50msec.
 
 ## Comparing PSI to WSS estimation
 
