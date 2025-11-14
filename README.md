@@ -37,7 +37,7 @@ update data that is harder to collect like page accessed bits.
 RSS and WSS of a workload, either together or separately.
 
 It simply allocates a specified number of pages via mmap(), then touches a
-subset of them (every 1, every 4, etc).  It can be run in a loop with
+subset of pages (every 1, every 4, etc).  It can be run in a loop with
 a specified delay; for example to allocate 65536 pages and touch every one:
 
 ```
@@ -664,7 +664,7 @@ and compare these with the wss-v4 multi-gen LRU approach.
 
 We test this via testwss.sh, which
 creates a cgroup for the [testmem](./testmem.c) program; it allocates
-memory and touches a configurable subset of them.  For example
+pages of memory and touches a configurable subset of them.  For example
 
 ```
 $ ./testmem 1024 4
