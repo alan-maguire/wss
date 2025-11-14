@@ -31,9 +31,9 @@ interested in application behaviour in a specific time window.
 [testmem.c](./testmem.c) is a simple program that allows us to manipulate the
 RSS and WSS of a workload, either together or separately.
 
-It simply allocates a specified number of pages, then touches a subset of
-them (every 1, every 4, etc).  It can be run in a loop with a specified delay;
-for example to allocate 65536 pages and touch every one:
+It simply allocates a specified number of pages via mmap(), then touches a
+subset of them (every 1, every 4, etc).  It can be run in a loop with
+a specified delay; for example to allocate 65536 pages and touch every one:
 
 ```
 $ ./testmem 65536 1
@@ -66,27 +66,13 @@ We can see the allocation by examining /proc/$(pgrep testmem)/map
 ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]
 ```
 
-You might expect it to be in the `[heap]` but in fact the allocation is
-a separate `mmap()`ing; in this case in
+The allocation is in a separate `mmap()`ing; in this case in
 
 ```
 7fcf47bff000-7fcf57c00000 rw-p 00000000 00:00 0
 ```
 
-The reason for this is in the malloc man page:
-
-
-```
-       Normally,  malloc()  allocates  memory  from  the heap, and adjusts the size of the heap as required, using sbrk(2).
-       When allocating blocks of memory larger than MMAP_THRESHOLD bytes, the glibc malloc() implementation  allocates  the
-       memory  as  a private anonymous mapping using mmap(2).  MMAP_THRESHOLD is 128 kB by default, but is adjustable using
-       mallopt(3).  Prior to Linux 4.7 allocations performed using mmap(2) were  unaffected  by  the  RLIMIT_DATA  resource
-       limit; since Linux 4.7, this limit is also enforced for allocations performed using mmap(2).
-```
-
-So in our case (since the allocation was more than `MMAP_THRESHOLD`)
-we got a separate `mmap()`ed region; to verify we will check the size of the
-largest anonymous `mmap()`ed region:
+We see that the size is
 
 ```
 0x7fcf57c00000 - 0x7fcf47bff000 = 0x10001000
@@ -94,6 +80,15 @@ largest anonymous `mmap()`ed region:
 
 This is 268439552 in decimal, which divided by PAGE_SIZE (4096 in this case)
 is 65537; i.e. this matches our allocation size of 65536 pages.
+
+Note that when `mmap()`ing in `testmem` we used
+
+```
+mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_POPULATE, -1, 0);
+```
+
+We wanted an anonymous (non file-backed) mapping that is pre-faulted
+(`MAP_POPULATE`); will trigger a resident set size (RSS) of ~65536 bytes.
 
 Let us see how we measure WSS for `testmem` run in a memory cgroup.  `wss-v3`
 is a program - based on Brendan's `wss-v2` - which measures working set size
@@ -138,6 +133,9 @@ Est(s)     Ref(MB)           Ref(Pages)         Total(Pages)
 
 And that is what we see.  So we see wss-v3 can distinguish resident set
 size - memory allocated - from working set size - memory being used.
+
+Note that we can see RSS easily via the second value in `/proc/<pid>/statm`
+or indeed via `/proc/<pid>/status`.
 
 Now we will discuss various methods for assessing working set size/effects.
 We will start with the method used for wss-v2 and wss-v3 - idle page tracking.
