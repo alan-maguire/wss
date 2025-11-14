@@ -431,7 +431,7 @@ Note that some systems will have multiple NUMA nodes and in that
 case we would need to create generations for each node.
 
 [wss-v4.py](./wss-v4.py) implements this approach; given a
-cgroup path ('-c cgroup_path') it will age out the current
+cgroup name ('-c cgroup') it will age out the current
 set of generations gradually over an interval.  It uses the number
 of generations as the basis for figuring out when to age out,
 so for example for a 10 second interval with 4 generations it will
