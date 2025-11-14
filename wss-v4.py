@@ -23,7 +23,7 @@ import os
 import time
 
 def parse_args():
-    parser = argparse.ArgumentParser('Workings set size estimator using Multi-Generational LRU',
+    parser = argparse.ArgumentParser('Working set size estimator using Multi-Generational LRU',
                                      formatter_class=argparse.RawTextHelpFormatter)
 
     parser.add_argument('-c', '--cgroup', required=True, type=str,
@@ -36,6 +36,8 @@ def parse_args():
                         help='run forever') 
     parser.add_argument('-b', '--breakdown', required=False, action='store_true',
                         help='breakdown by generation')
+    parser.add_argument('-o', '--omit_oldest', required=False, action='store_true',
+                        help='omit oldest generation of pages (coldest pages) from WSS estimate')
     parser.add_argument('-d', '--debug', required=False, action='store_true',
                         help='debug mode')
 
@@ -159,20 +161,28 @@ def main(args):
                   "->", cgroup_lastgen, ") anon_pages:", cgroup_anon,
                   "file_pages:", cgroup_file)
         time_taken = str(round(time_secs, 4))
-        total_anon = sum(cgroup_anon)
-        total_file = sum(cgroup_file)
-        total = total_anon + total_file
-        total_pages = str(total)
-        total_mb = str(round(total*pagesize/mb, 2))
+        cgroup_firstgen = cgroup_lastgen - cgroup_gens + 1
+        if (args.omit_oldest):
+            cgroup_firstgen = cgroup_firstgen + 1
         if (args.breakdown):
             for i in range(cgroup_gens):
+                if (args.omit_oldest) and (i == 0):
+                    continue
                 gen_total = cgroup_anon[i] + cgroup_file[i]
                 gen_pages = str(gen_total)
                 gen_mb = str(round(gen_total*pagesize/mb, 2))
-                gen=str(cgroup_lastgen - cgroup_gens + 1 + i)
+                gen=str(cgroup_firstgen + i)
                 print(f'{time_taken:>7} {gen_mb:>10} {gen_pages:>20} {gen:>20}')
         else:
-            gen = str(cgroup_lastgen - cgroup_gens + 1) + '->' + str(cgroup_lastgen)
+            total_anon = sum(cgroup_anon)
+            total_file = sum(cgroup_file)
+            if (args.omit_oldest):
+                total_anon = total_anon - cgroup_anon[0]
+                total_file = total_file - cgroup_file[0]
+            total = total_anon + total_file
+            total_pages = str(total)
+            total_mb = str(round(total*pagesize/mb, 2))
+            gen = str(cgroup_firstgen) + '->' + str(cgroup_lastgen)
             print(f'{time_taken:>7} {total_mb:>10} {total_pages:>20} {gen:>20}')
         if (args.forever == False):
             break

@@ -135,7 +135,15 @@ And that is what we see.  So we see wss-v3 can distinguish resident set
 size - memory allocated - from working set size - memory being used.
 
 Note that we can see RSS easily via the second value in `/proc/<pid>/statm`
-or indeed via `/proc/<pid>/status`.
+or indeed via `/proc/<pid>/status`:
+
+```
+$ cat /proc/$(pgrep testmem)/statm
+66616 65843 287 1 0 65581 0
+```
+
+Above we see RSS of 65843.
+
 
 Now we will discuss various methods for assessing working set size/effects.
 We will start with the method used for wss-v2 and wss-v3 - idle page tracking.
@@ -268,9 +276,7 @@ $ echo y >/sys/kernel/mm/lru_gen/enabled
 ```
 
 It provides breakdowns of page accesses, both anonymous and file-backed
-per generation and also breaks down results by cgroup.  There is a catch
-though which we need to explain before we move on to taking measurements.
-
+per generation and also breaks down results by cgroup.
 There are a few different modes of multi-gen LRU operation, and for accurate
 working set size estimation we need to understand them.  As well as
 supporting 'y', we can specify any combination of:
@@ -292,96 +298,128 @@ Below we observe cgroup stats before and after running `testmem` accessing every
 for the cgroup.
 
 ```
+$ mkdir /sys/fs/cgroup/memory/foo
 $ tail -6 /sys/kernel/debug/lru_gen
-memcg   110 /foo
+memcg    85 /foo
  node     0
-        104     209928          0           4 
-        105     147816          0           0 
-        106     144446          0           0 
-        107     141762          0           0 
+          0       5922          0           0 
+          1       5922          0           0 
+          2       5922          0           0 
+          3       5922          0           0 
 $ cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1 &
-[1] 862190
-$ tail -6 /sys/kernel/debug/lru_gen
-memcg   110 /foo
+[1] 58982
+$ sudo tail -6 /sys/kernel/debug/lru_gen
+memcg    85 /foo
  node     0
-        104     253197          0           4 
-        105     191085          0           0 
-        106     187715      16408           0 
-        107     185031          0           0 
+          0      22039          0           0 
+          1      22039          0           0 
+          2      22039      65559           0 
+          3      22039          0           0 
 ```
 
-We see that for generation 106, there were 16408 anonymous (non file-backed)
-accesses; this matches closely our expected ~16384 (65536/4).
-
-The oldest generation (104) contains the coldest pages, while generation
-107 contains the hottest.  We can also see this by looking at the second
-column which tells us that the pages in the generation have been accessed
-in the last n msec; so for gen 104 they have been accessed in the last
-253197msec, generation 105 in the last 191085mec, etc.
+We see that for generation 2, there were 65559 anonymous (non file-backed)
+accesses; this corresponds to our mmap()ed memory.
+The oldest generation (0) contains the coldest pages, while generation
+3 contains the hottest.
 
 But here comes the interesting part; we can trigger a new
 generation!  By doing the following:
 
 ```
-$ echo "+110 0 107 0 0" > /sys/kernel/debug/lru_gen
+$ echo "+85 0 3" > /sys/kernel/debug/lru_gen
 ```
 
-we are saying create a new generation max_gen_nr+1 (where max_gen_nr is 107
-in this case) for the cgroup (110), node id 0. The trailing 0s specify
-respectively
-
-- do not force a scan of the anon pages when swap is off
-- reduce overhead with an associated reduction in accuracy
+we are saying create a new generation max_gen_nr+1 (where max_gen_nr is 3
+in this case) for the cgroup (85), node id 0.
 
 Now the lru_gen output looks like this:
 
 ```
 $ tail -6 /sys/kernel/debug/lru_gen
-memcg   110 /foo
+memcg    85 /foo
  node     0
-        105     385350          0           4 
-        106     381980      16406           0 
-        107     379296          2           0 
-        108       1776          0           0 
-
+          1     207652          0           0 
+          2     207652         20           0 
+          3     207652      65539           0 
+          4       1624          0           0 
 ```
 
-Now generation 106 is approaching being the oldest generation; if we again
-add a new generation:
+Notice what has happened to the age_in_ms column; we while generations
+1-3 have the same age (207652), we have now created a younger generation.
+We will wait a number of seconds and do the same again:
 
 ```
-$ echo "+110 0 108 0 0" > /sys/kernel/debug/lru_gen
+$ echo "+85 0 4" > /sys/kernel/debug/lru_gen
+memcg    85 /foo
+ node     0
+          2     232082          9           0 
+          3     232082      49154           0 
+          4      26054      16396           0 
+          5       1680          0           0 
+```
+
+Now here is where things get interesting; we now have two new generations
+of age_in_ms 1680 (hottest) and 26054ms.  But critically what we see is
+that the cold pages associated with the initial `mmap()` have been split
+out from the measurements, and the hotter pages associated with the 
+page access loop (1/4 of the total) are now in generation 4.  So we are
+isolating hot and cold pages!
+
+This is why waiting for a period between creating new generations is
+crtical; it allows us to separate pages into hot/cold and isolate
+working set from resident set.
+
+Let us go again:
+
+```
+$ echo "+85 0 5" > /sys/kernel/debug/lru_gen
 $ tail -6 /sys/kernel/debug/lru_gen
-memcg   110 /foo
+memcg    85 /foo
  node     0
-        106     398559      16401           4 
-        107     395875          2           0 
-        108      18355          5           0 
-        109       1100          0           0 
+          3     268370      49163           0 
+          4      62342          0           0 
+          5      37968      16396           0 
+          6       7475          0           0 
 ```
 
-And with one more generation added, the pages age out:
+And with one more generation added, the pages are now the coldest:
 
 ```
-$ echo "+110 0 109 0 0" > /sys/kernel/debug/lru_gen
-$ tail -5 /sys/kernel/debug/lru_gen
-memcg   110 /foo
+$ echo "+85 0 6" > /sys/kernel/debug/lru_gen
+$ tail -6 /sys/kernel/debug/lru_gen
+memcg    85 /foo
  node     0
-        107     404750          2           4 
-        108      27230          0           0 
-        109       9975          5           0 
-        110       2113      16401           0 
+          3     268370      49163           0 
+          4      62342          0           0 
+          5      37968      16396           0 
+          6       7475          0           0 
 ```
 
-Now we see the latest generation 110 has the page accesses associated
-with our program since the old accesses aged out and page reclaim
-ran on them, discovering they were still in use. Hence the promotion
-to the latest generation.
+
+Now we see the coldest pages are in the oldest generation and have
+not been accessed in 268370ms (268 seconds).  So not only can we
+assess working set size, but by spawning generations regularly we
+can understand the time dynamics of memory use.
+
+Contrast this with the RSS measurement; it has none of this
+detail:
+
+```
+$ cat /proc/$(pgrep testmem)/statm
+66649 65895 335 1 0 65614 0
+```
+
+So we see the 65895 is roughly equal to the LRU sum across generations,
+but we are collapsing the results across time and losing the temporal access
+patterns which inform our WSS estimate.
 
 So this sketches out the technique; for the a multi-generational
 LRU with N generations, age out the current set of N generations;
-after doing so the latest generation will then give us an indication 
+after doing so the latest generations will then give us an indication 
 of current working set size.
+
+Note that some systems will have multiple NUMA nodes and in that
+case we would need to create generations for each node.
 
 [wss-v4.py](./wss-v4.py) implements this approach; given a
 cgroup path ('-c cgroup_path') it will age out the current
@@ -394,18 +432,20 @@ by generations with the '-b' argument.  The full options are as
 follows:
 
 ```
-$ $ sudo ./wss-v4.py --help
-usage: Workings set size estimator using Multi-Generational LRU
-       [-h] -c CGROUP [-i INTERVAL] [-f] [-b] [-d]
+$ ./wss-v4.py --help
+usage: Working set size estimator using Multi-Generational LRU
+       [-h] -c CGROUP [-q] [-i INTERVAL] [-f] [-b] [-o] [-d]
 
 optional arguments:
   -h, --help            show this help message and exit
   -c CGROUP, --cgroup CGROUP
                         cgroup_path
+  -q, --quiet           quiet mode
   -i INTERVAL, --interval INTERVAL
                         interval_secs
   -f, --forever         run forever
   -b, --breakdown       breakdown by generation
+  -o, --omit_oldest     omit oldest generation of pages (coldest pages) from WSS estimate
   -d, --debug           debug mode
 ```
 
@@ -416,34 +456,42 @@ running:
 $ cgexec -g memory:foo ./testmem 65536 4 0 >/dev/null 2>&1 &
 [1] 900006
 $ tail -6 /sys/kernel/debug/lru_gen
-memcg   110 /foo
+memcg    85 /foo
  node     0
-        242     317484          0           0 
-        243     314982          0           0 
-        244     312480      16792           4 
-        245     309978          0           0 
-$ sudo ./wss-v4.py -c /sys/fs/cgroup/memory/foo 
+          0      16456          0           0 
+          1      16456          0           0 
+          2      16456      65560           0 
+          3      16456          0           0 
+$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -o
  Est(s)    Ref(MB)           Ref(Pages)                  Gen
-10.0111         66                16796             246->249
+10.0365      64.05                16397                 5->7
+
 ```
+
+Importantly, the `-o` option is used here; it omits the oldest
+generation (coldest pages) from the WSS calcuation; since we
+know those pages are > 10 secs old we do not want to consider
+them as part of WSS.  We can configure the interval to be larger
+of course via the `-i interval` option.
 
 We can breakdown accesses by generation too; this is useful in
 exploring access dynamics over the course of the 10 sec interval:
 
 ```
-$ sudo ./wss-v4.py -c /sys/fs/cgroup/memory/foo -b
+$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -b
  Est(s)    Ref(MB)           Ref(Pages)                  Gen
-10.0105          0                    4                  250
-10.0105          0                    0                  251
-10.0105         66                16790                  252
-10.0105          0                    2                  253
+10.0448     192.04                49163                    8
+10.0448        0.0                    0                    9
+10.0448      64.05                16397                   10
+10.0448        0.0                    0                   11
 ```
 
 As mentioned above, we spawn a new generation each 2.5 seconds
 in the default 10 second interval, so we get a picture here
 not only of which pages were accessed, but also when.  In the case
-of our program which is a tight loop accessing pages, nearly all
-fall into the same generation.
+of our program which is a tight loop accessing pages, all fall into
+the same generation (10) while the original page accesses from the
+`mmap()` are in the coldest generation (8).
 
 ## How accurate is it?
 
@@ -451,16 +499,12 @@ We see above that the accuracy is not as fine-grained as idle page tracking;
 we get ~16400 page accesses for our testmem program where given the synthetic
 workload we should see closer to 16384.  However that is pretty close!
 
-We might ask this: why are the pages accessed by our application not
-always in the latest generation? XXX check this! From reading the documentation
-it appears that multi-generational LRU does its best to avoid walking
-each page, starting with page table entries (PTEs) when assessing
-recency.  Fine-grained checking only happens on reclaim when pages age
-out; in our case we then discover they are still in use and get promoted.
-
 So we age out the generations in order to discover if (what appear to be) cold
 pages are in fact still in use, and using this technique we can discover the
-working set size.
+working set size, and indeed how it changes over time.
+
+And that is key; we get a picture of WSS over time as well as at a
+particular moment.
 
 ## What are the overheads?
 
@@ -469,11 +513,6 @@ for some workloads which can be mitigated by enabling clearing accessed
 bits on leaf/non-leaf page tables (flags 0x2, 0x4 for
 /sys/kernel/mmu/lru_gen/enabled).  As a result we switched all flags on,
 and saw high accuracy regardless.
-
-Similarly when aging out generations, the final parameter (force_scan)
-can be set to 0 to reduce overhead, again having a smaller impact on accuracy.
-We did not observe any differences in accuracy for force_scan=1 versus 0,
-so in our explorations we stuck with force_scan=0.
 
 When we forcibly age out the generations to update our working set size
 estimate, page reclaim needs to run on the oldest generation, so there
