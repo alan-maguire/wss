@@ -93,7 +93,7 @@ mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PR
 ```
 
 We wanted an anonymous (non file-backed) mapping that is pre-faulted
-(`MAP_POPULATE`); this will trigger a resident set size (RSS) of ~65536 bytes.
+(`MAP_POPULATE`); this will trigger a resident set size (RSS) of ~65536 pages.
 Critically the WSS does not have to match the RSS forever; we can alter
 testmem behaviour to only touch every 4th page after initial pre-faulting.
 This will allow us to see if WSS measurements capture the WSS/RSS distinction.
