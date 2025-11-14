@@ -472,8 +472,8 @@ memcg    85 /foo
           2      16456      65560           0 
           3      16456          0           0 
 $ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -o
- Est(s)    Ref(MB)           Ref(Pages)                  Gen
-10.0365      64.05                16397                 5->7
+ Est(s)    Ref(MB)           Ref(Pages)
+10.0365      64.05                16397
 
 ```
 
@@ -488,19 +488,20 @@ exploring access dynamics over the course of the 10 sec interval:
 
 ```
 $ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -b
- Est(s)    Ref(MB)           Ref(Pages)                  Gen
-10.0448     192.04                49163                    8
-10.0448        0.0                    0                    9
-10.0448      64.05                16397                   10
-10.0448        0.0                    0                   11
+ Est(s)    Ref(MB)           Ref(Pages)
+10.0448     192.04                49163
+10.0448        0.0                    0
+10.0448      64.05                16397
+10.0448        0.0                    0
 ```
 
 As mentioned above, we spawn a new generation each 2.5 seconds
 in the default 10 second interval, so we get a picture here
 not only of which pages were accessed, but also when.  In the case
 of our program which is a tight loop accessing pages, all fall into
-the same generation (10) while the original page accesses from the
-`mmap()` are in the coldest generation (8).
+the same generation while the original page accesses from the
+`mmap()` are in the coldest generation.  Generations are ordered -
+as in /sys/kernel/debug/lru_gen - from oldest to most recent.
 
 ## How accurate is it?
 
@@ -533,9 +534,9 @@ Notice that the time taken for aging out the generations in wss-v4.py
 is only very slightly more than the interval time (10sec):
 
 ```
-$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo 
- Est(s)    Ref(MB)           Ref(Pages)                  Gen
-  10.01         64                16408             242->245
+$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -o
+ Est(s)    Ref(MB)           Ref(Pages)
+  10.01         64                16408
 ```
 
 It only takes an additional 10msec - aside from the wait time of 10sec -

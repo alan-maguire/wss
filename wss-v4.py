@@ -47,7 +47,7 @@ def parse_args():
 def parse_lru_gen(cgroup_name):
     cgroup_id = 0
     cgroup_gens = 0
-    cgroup_lastgen = 0
+    cgroup_lastgen = []
     cgroup_nodes = 0
     cgroup_anon = []
     cgroup_file = []
@@ -63,6 +63,19 @@ def parse_lru_gen(cgroup_name):
                 data = line.split()
                 if (len(data) < 2):
                     continue
+                if (data[0] == 'memcg'):
+                    # done since we already found our cgroup
+                    if (id > 0):
+                        break
+                    if (data[2] != cgroup_name):
+                        continue
+                    id = int(data[1])
+                    cgroup_id = id
+                    cgroup_anon = []
+                    cgroup_file = []
+                    cgroup_nodes = 0
+                    continue
+
                 # we are dealing with memcg data for our cgroup
                 # either of form
                 # node N
@@ -76,8 +89,12 @@ def parse_lru_gen(cgroup_name):
                        continue
                    if (len(data) < 4):
                        continue
+                   lastgen = int(data[0])
                    # gather gen, anon, file data
-                   cgroup_lastgen = int(data[0])
+                   if (len(cgroup_lastgen) < cgroup_nodes):
+                       cgroup_lastgen.append(lastgen)
+                   else:
+                       cgroup_lastgen[cgroup_nodes - 1] = lastgen
                    cgroup_gens = cgroup_gens + 1
                    canon=int(data[2])
                    cfile=int(data[3])
@@ -98,6 +115,7 @@ def parse_lru_gen(cgroup_name):
                 # reset id
                 if (id > 0):
                     id = 0
+                    cgroup_nodes = 0
                 if (data[2] != cgroup_name):
                     continue
                 id = int(data[1])
@@ -120,50 +138,48 @@ def init_lru_gen():
     except IOError:
             print('Could not write lru gen file; ensure run via sudo + CONFIG_LRU_GEN is enabled for your kernel')
 
-def write_lru_gen(cgroup_id, node, cgroup_lastgen):
+def write_lru_gen(args, cgroup_id, node, lastgen):
     try:
         with open('/sys/kernel/debug/lru_gen', 'w') as f:
-            cmd = '+' + str(cgroup_id) + ' ' + str(node) + ' ' + str(cgroup_lastgen)
+            cmd = '+' + str(cgroup_id) + ' ' + str(node) + ' ' + str(lastgen)
+            if (args.debug):
+                print('Writing ', cmd)
             f.write(cmd)
             f.close()
     except IOError:
             print('Could not write lru gen file; ensure run via sudo + CONFIG_LRU_GEN is enabled for your kernel')
 
 def main(args):
-    cgroup = args.cgroup
-    cgroup_name = '/' + os.path.basename(cgroup)
+    if (args.cgroup[0] != '/'):
+        cgroup_name = '/' + args.cgroup
+    else:
+        cgroup_name = args.cgroup
     pagesize = 4096
     mb = 1024 * 1024
     init_lru_gen()
     cgroup_id, cgroup_nodes, cgroup_gens, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
     if (args.debug):
-        print("cgroup", cgroup_name, "id", cgroup_id, "#nodes", cgroup_nodes,
-              "gens (", cgroup_lastgen - cgroup_gens + 1,
-              "->", cgroup_lastgen, ") anon pages:", cgroup_anon,
+        print("cgroup", cgroup, "id", cgroup_id, "#nodes", cgroup_nodes,
+              "lastgens", cgroup_lastgen, "anon pages:", cgroup_anon,
               "file pages:", cgroup_file)
-    cols=[ 'Est(s)', 'Ref(MB)', 'Ref(Pages)', 'Gen']
+    cols=[ 'Est(s)', 'Ref(MB)', 'Ref(Pages)']
     if (args.quiet == False):
-        print(f'{cols[0]:>7} {cols[1]:>10} {cols[2]:>20} {cols[3]:>20}')
+        print(f'{cols[0]:>7} {cols[1]:>10} {cols[2]:>20}')
 
     while True:
         start = time.time()
         for i in range(cgroup_gens):
             for j in range(cgroup_nodes):
-                write_lru_gen(cgroup_id, j, cgroup_lastgen)
+                write_lru_gen(args, cgroup_id, j, cgroup_lastgen[j])
             time.sleep(args.interval/cgroup_gens)
-            cgroup_lastgen = cgroup_lastgen + 1
         _, _, _, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
         end = time.time()
         time_secs = end - start
         if (args.debug):
             print("cgroup", cgroup_name, "id", cgroup_id,
-                  "gens (", cgroup_lastgen - cgroup_gens + 1,
-                  "->", cgroup_lastgen, ") anon_pages:", cgroup_anon,
+                  "anon_pages:", cgroup_anon,
                   "file_pages:", cgroup_file)
         time_taken = str(round(time_secs, 4))
-        cgroup_firstgen = cgroup_lastgen - cgroup_gens + 1
-        if (args.omit_oldest):
-            cgroup_firstgen = cgroup_firstgen + 1
         if (args.breakdown):
             for i in range(cgroup_gens):
                 if (args.omit_oldest) and (i == 0):
@@ -171,8 +187,7 @@ def main(args):
                 gen_total = cgroup_anon[i] + cgroup_file[i]
                 gen_pages = str(gen_total)
                 gen_mb = str(round(gen_total*pagesize/mb, 2))
-                gen=str(cgroup_firstgen + i)
-                print(f'{time_taken:>7} {gen_mb:>10} {gen_pages:>20} {gen:>20}')
+                print(f'{time_taken:>7} {gen_mb:>10} {gen_pages:>20}')
         else:
             total_anon = sum(cgroup_anon)
             total_file = sum(cgroup_file)
@@ -182,8 +197,7 @@ def main(args):
             total = total_anon + total_file
             total_pages = str(total)
             total_mb = str(round(total*pagesize/mb, 2))
-            gen = str(cgroup_firstgen) + '->' + str(cgroup_lastgen)
-            print(f'{time_taken:>7} {total_mb:>10} {total_pages:>20} {gen:>20}')
+            print(f'{time_taken:>7} {total_mb:>10} {total_pages:>20}')
         if (args.forever == False):
             break
 

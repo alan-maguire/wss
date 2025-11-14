@@ -48,7 +48,7 @@ test()
 	case $wsscmd in
 	"wss-v2")	WSSCMD="./wss-v2 $TESTMEM 10";;
 	"wss-v3")	WSSCMD="./wss-v3 $CGROUP_TEST 10";;
-	"wss-v4")	WSSCMD="./wss-v4.py -q -c $CGROUP_TEST -i 10 -o";;
+	"wss-v4")	WSSCMD="./wss-v4.py -q -c $CGROUP_NAME -i 10 -o";;
 	esac
 	OUT=$($WSSCMD | awk '{print $1 "\t" $2}')
 	RSSPAGES=$(cat /proc/${TESTMEM}/statm |awk '{print $2}')
