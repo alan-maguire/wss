@@ -25,8 +25,13 @@ All methods are carried out on a per-cgroup basis because
 
 Working set size (WSS) is the amount of memory a process or cgroup _uses_;
 resident set size (RSS) is the amount of memory a process or cgroup has
-allocated.  These are not always identical, particularly when we are
+resident in memory.  These are not always identical, particularly when we are
 interested in application behaviour in a specific time window.
+
+Keeping track of RSS is easier for the kernel since it is involved in
+adding/removing memory from a process, whereas WSS is dictated by
+application memory access patterns that will change over time and
+update data that is harder to collect like page accessed bits.
 
 [testmem.c](./testmem.c) is a simple program that allows us to manipulate the
 RSS and WSS of a workload, either together or separately.
@@ -88,23 +93,27 @@ mem = mmap(NULL, pagesize * numpages, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PR
 ```
 
 We wanted an anonymous (non file-backed) mapping that is pre-faulted
-(`MAP_POPULATE`); will trigger a resident set size (RSS) of ~65536 bytes.
+(`MAP_POPULATE`); this will trigger a resident set size (RSS) of ~65536 bytes.
+Critically the WSS does not have to match the RSS forever; we can alter
+testmem behaviour to only touch every 4th page after initial pre-faulting.
+This will allow us to see if WSS measurements capture the WSS/RSS distinction.
 
 Let us see how we measure WSS for `testmem` run in a memory cgroup.  `wss-v3`
 is a program - based on Brendan's `wss-v2` - which measures working set size
 for a memory cgroup (instead of a process).  The internals are described
 below, but for now all we need to know is it can measure working set size.
 
+All commands below are run as root.
 ```
-$ sudo mkdir /sys/fs/cgroup/memory/foo
-$ sudo cgexec -g memory:foo ./testmem 65536 1 0 > /dev/null 2>&1 &
+$ mkdir /sys/fs/cgroup/memory/foo
+$ cgexec -g memory:foo ./testmem 65536 1 0 > /dev/null 2>&1 &
 [1] 449627
-$ sudo ./wss-v3 /sys/fs/cgroup/memory/foo 10
+$ ./wss-v3 /sys/fs/cgroup/memory/foo 10
 Watching '/sys/fs/cgroup/memory/foo'(inode 23651) page references during 10.00 seconds...
 Est(s)     Ref(MB)           Ref(Pages)         Total(Pages)
 11.122      256.00                65693                65703
-$ sudo pkill -TERM testmem
-$ sudo rmdir /sys/fs/cgroup/memory/foo
+$ pkill -TERM testmem
+$ rmdir /sys/fs/cgroup/memory/foo
 ```
 
 As expected, we saw ~256Mb (65536 pages) being used.
@@ -123,9 +132,9 @@ since we only touch 1 in 4 pages.
 
 
 ```
-$ sudo mkdir /sys/fs/cgroup/memory/foo
-$ sudo cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1
-$ sudo ./wss-v3 /sys/fs/cgroup/memory/foo 10
+$ mkdir /sys/fs/cgroup/memory/foo
+$ cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1
+$ ./wss-v3 /sys/fs/cgroup/memory/foo 10
 Watching '/sys/fs/cgroup/memory/foo'(inode 23683) page references during 10.00 seconds...
 Est(s)     Ref(MB)           Ref(Pages)         Total(Pages)
 11.823       64.00                16542                16552
@@ -142,8 +151,8 @@ $ cat /proc/$(pgrep testmem)/statm
 66616 65843 287 1 0 65581 0
 ```
 
-Above we see RSS of 65843.
-
+Above we see RSS of 65843; so this illustrates that RSS is not the
+same as WSS for this workload.
 
 Now we will discuss various methods for assessing working set size/effects.
 We will start with the method used for wss-v2 and wss-v3 - idle page tracking.
@@ -308,7 +317,7 @@ memcg    85 /foo
           3       5922          0           0 
 $ cgexec -g memory:foo ./testmem 65536 4 0 > /dev/null 2>&1 &
 [1] 58982
-$ sudo tail -6 /sys/kernel/debug/lru_gen
+$ tail -6 /sys/kernel/debug/lru_gen
 memcg    85 /foo
  node     0
           0      22039          0           0 
@@ -524,7 +533,7 @@ Notice that the time taken for aging out the generations in wss-v4.py
 is only very slightly more than the interval time (10sec):
 
 ```
-$ sudo ./wss-v4.py -c /sys/fs/cgroup/memory/foo 
+$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo 
  Est(s)    Ref(MB)           Ref(Pages)                  Gen
   10.01         64                16408             242->245
 ```
@@ -537,7 +546,7 @@ Contrast this with the idle page tracking approach utilized by
 to rescan idle page tables, map from page to cgroup etc:
 
 ```
-$ sudo ./wss-v3 /sys/fs/cgroup/memory/foo 10
+$ ./wss-v3 /sys/fs/cgroup/memory/foo 10
 Watching '/sys/fs/cgroup/memory/foo'(inode 23683) page references during 10.00 seconds...
 Est(s)     Ref(MB)           Ref(Pages)         Total(Pages)
 11.823       64.00                16542                16552
