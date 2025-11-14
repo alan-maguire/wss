@@ -27,7 +27,7 @@ def parse_args():
                                      formatter_class=argparse.RawTextHelpFormatter)
 
     parser.add_argument('-c', '--cgroup', required=True, type=str,
-                        help='cgroup_path')
+                        help='cgroup_name')
     parser.add_argument('-q', '--quiet', required=False, action='store_true',
                         help='quiet mode')
     parser.add_argument('-i', '--interval', required=False, type=int,

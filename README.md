@@ -448,7 +448,7 @@ usage: Working set size estimator using Multi-Generational LRU
 optional arguments:
   -h, --help            show this help message and exit
   -c CGROUP, --cgroup CGROUP
-                        cgroup_path
+                        cgroup_name
   -q, --quiet           quiet mode
   -i INTERVAL, --interval INTERVAL
                         interval_secs
@@ -471,7 +471,7 @@ memcg    85 /foo
           1      16456          0           0 
           2      16456      65560           0 
           3      16456          0           0 
-$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -o
+$ ./wss-v4.py -c foo -o
  Est(s)    Ref(MB)           Ref(Pages)
 10.0365      64.05                16397
 
@@ -487,7 +487,7 @@ We can breakdown accesses by generation too; this is useful in
 exploring access dynamics over the course of the 10 sec interval:
 
 ```
-$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -b
+$ ./wss-v4.py -c foo -b
  Est(s)    Ref(MB)           Ref(Pages)
 10.0448     192.04                49163
 10.0448        0.0                    0
@@ -534,7 +534,7 @@ Notice that the time taken for aging out the generations in wss-v4.py
 is only very slightly more than the interval time (10sec):
 
 ```
-$ ./wss-v4.py -c /sys/fs/cgroup/memory/foo -o
+$ ./wss-v4.py -c foo -o
  Est(s)    Ref(MB)           Ref(Pages)
   10.01         64                16408
 ```
