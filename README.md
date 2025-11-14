@@ -676,12 +676,14 @@ results from wss-v2 to per-cgroup from wss-v3 to the wss-v4 per-cgroup
 multi-gen LRU tracking approach.  For each approach we collect the
 Est(s) estimated time taken to monitor _and_ collect the data, and also
 collect the estimate in Mb.  This will allow us to compare collection
-overheads and accuracy.  This is done for 1024, 2048 and 4096 pages, and
-we expect to see 4, 8 and 16Mb for accessed pages.  We also collect
+overheads and accuracy.  This is done for 4096 and 65536 pages, and
+we expect to see 16Mb, 256Mb for accessed pages.  We also collect
 RSS measured from `/proc/$(pgrep testmem)/statm`.
 
 First we measure for RSS == WSS for 4096 and 65536 pages, then we
 measure for WSS == 1/4 of RSS (where we access every 4th page).
+In the latter case we expect to see 4Mb/64Mb for WSS (1/4 of the
+RSS):
 
 ```
 Testing wss-v2 for 1/1 of 4096 pages (16 Mb WSS, 16 Mb RSS)
