@@ -36,6 +36,8 @@ def parse_args():
                         help='run forever') 
     parser.add_argument('-b', '--breakdown', required=False, action='store_true',
                         help='breakdown by generation')
+    parser.add_argument('-r', '--readonly', required=False, action='store_true',
+                        help='read current data; do not add new generations')
     parser.add_argument('-o', '--omit_oldest', required=False, action='store_true',
                         help='omit oldest generation of pages (coldest pages) from WSS estimate')
     parser.add_argument('-d', '--debug', required=False, action='store_true',
@@ -170,7 +172,8 @@ def main(args):
         start = time.time()
         for i in range(cgroup_gens):
             for j in range(cgroup_nodes):
-                write_lru_gen(args, cgroup_id, j, cgroup_lastgen[j])
+                if args.readonly == False:
+                    write_lru_gen(args, cgroup_id, j, cgroup_lastgen[j])
             time.sleep(args.interval/cgroup_gens)
         _, _, _, cgroup_lastgen, cgroup_anon, cgroup_file = parse_lru_gen(cgroup_name)
         end = time.time()
