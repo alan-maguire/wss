@@ -30,8 +30,11 @@ interested in application behaviour in a specific time window.
 
 Keeping track of RSS is easier for the kernel since it is involved in
 adding/removing memory from a process, whereas WSS is dictated by
-application memory access patterns that will change over time and
-update data that is harder to collect like page accessed bits.
+application memory access patterns that will change over time, and
+for these the kernel updates data that is harder to collate like page
+accessed bits.  It would be expensive for the kernel to constantly ask
+"How much memory is each task using right now?", and of course different
+users would want different definitions of "right now".
 
 [testmem.c](./testmem.c) is a simple program that allows us to manipulate the
 RSS and WSS of a workload, either together or separately.
@@ -391,20 +394,6 @@ memcg    85 /foo
           6       7475          0           0 
 ```
 
-And with one more generation added, the pages are now the coldest:
-
-```
-$ echo "+85 0 6" > /sys/kernel/debug/lru_gen
-$ tail -6 /sys/kernel/debug/lru_gen
-memcg    85 /foo
- node     0
-          3     268370      49163           0 
-          4      62342          0           0 
-          5      37968      16396           0 
-          6       7475          0           0 
-```
-
-
 Now we see the coldest pages are in the oldest generation and have
 not been accessed in 268370ms (268 seconds).  So not only can we
 assess working set size, but by spawning generations regularly we
@@ -502,6 +491,13 @@ of our program which is a tight loop accessing pages, all fall into
 the same generation while the original page accesses from the
 `mmap()` are in the coldest generation.  Generations are ordered -
 as in /sys/kernel/debug/lru_gen - from oldest to most recent.
+
+We noted above that it would be expensive for the kernel to constantly
+ask how much memory processes are using, but we see here that we get
+this answer for multi-generational LRU as a byproduct of something the
+kernel does anyway - aging out old pages.  And we are in control of
+the aging, so for a given cgroup we can observe the changing memory
+access patterns over a chosen time window.
 
 ## How accurate is it?
 
