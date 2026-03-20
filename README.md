@@ -558,20 +558,8 @@ it was accessed sometime between when we set idle flags and checked them.
 ## What is it?
 
 [Pressure Stall Information](https://docs.kernel.org/accounting/psi.html)
-was introduced in the 5.1 kernel with
-
-```
-commit 0e94682b73bfa6c44c98af7a26771c9c08c055d5
-Author: Suren Baghdasaryan <surenb@google.com>
-Date:   Tue May 14 15:41:15 2019 -0700
-
-    psi: introduce psi monitor
-    
-    Psi monitor aims to provide a low-latency short-term pressure detection
-    mechanism configurable by users.  It allows users to monitor psi metrics
-    growth and trigger events whenever a metric raises above user-defined
-    threshold within user-defined time window.
-```  
+[was introduced in the 4.20 kernel](https://kernelnewbies.org/Linux_4.20#Pressure_stall_information_for_better_overview_of_system_load),
+with monitoring added later in 5.1.
 
 PSI covers CPU, I/O, interrupt and memory pressure.  Here we will be concerned
 with memory pressure exclusively, but much of this applies to the other
