@@ -875,9 +875,8 @@ So we have learnt
 
 # References
 
-[Brendan's original WSS repository](https://github.com/brendangregg/wss)
-[Idle Page Tracking](https://docs.kernel.org/admin-guide/mm/idle_page_tracking.html)
-[Multi-Generational LRU](https://docs.kernel.org/admin-guide/mm/multigen_lru.html)
-[Pressure Stall Information](https://docs.kernel.org/accounting/psi.html)
-
+- [Brendan's original WSS repository](https://github.com/brendangregg/wss)
+- [Idle Page Tracking](https://docs.kernel.org/admin-guide/mm/idle_page_tracking.html)
+- [Multi-Generational LRU](https://docs.kernel.org/admin-guide/mm/multigen_lru.html)
+- [Pressure Stall Information](https://docs.kernel.org/accounting/psi.html)
 
