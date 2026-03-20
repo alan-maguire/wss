@@ -776,6 +776,7 @@ reclaim limit (`memory.high`) to 220Mb.
 
 ```
 $ mkdir /sys/fs/cgroup/foo
+$ cd /sys/fs/cgroup/foo
 $ echo 400M > memory.max
 $ echo 220M > memory.high
 ```
