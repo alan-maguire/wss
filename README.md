@@ -853,7 +853,8 @@ We see over time the average falls as the total time spent
 waiting comprises the intial - above memory.high - 256Mb.
 
 So we see that over time PSI does reflect WSS since memory
-reclaim is driven by WSS.
+reclaim is driven by actual memory usage over time - i.e.
+working set size.
 
 # Summary
 
