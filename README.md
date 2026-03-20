@@ -5,7 +5,7 @@ on working-set size estimation, comparing the approach used there
 to approaches based on newer kernel features.  Specifically we
 will compare
 
-1. the idle page tracking approach Brendan used in [wss-v2.c](./wss-v2.c) -
+1. the idle page tracking approach Brendan used in [wss-v2.c](https://github.com/brendangregg/wss/blob/master/wss-v2.c) -
   tweaked to [work on a per-cgroup basis](./wss-v3.c) rather than
   per-process; vs
 2. [multi generational LRU](https://docs.kernel.org/admin-guide/mm/multigen_lru.html)
@@ -770,9 +770,114 @@ compare the data gathered to that from our WSS estimators.  This will
 allow us to see how a specified amount of memory pressure is quantified
 in PSI, and how that relates to the measured WSS.
 
-To do this, we introduce a spiking element to WSS utilization in
-testmem; it normally touches one in N pages, but every specific number
-of iterations it will touch all pages.  If we set our cgroupv2 up such
-that the spike approaches its memory limit (`memory.max`) we should
-be able to see how PSI responds.
+We will limit our cgroup memory utilization such that we set a hard
+upper limit (`memory.max`) of 400Mb, while we will set our memory
+reclaim limit (`memory.high`) to 220Mb.
+
+```
+$ mkdir /sys/fs/cgroup/foo
+$ echo 400M > memory.max
+$ echo 220M > memory.high
+```
+
+We will first run our testmem program with a WSS of 65536 pages
+(256Mb) so that we see how exceeding memory.high impacts on PSI
+measurements.  In one window run `testmem` to touch every page
+every second, running forever (-1):
+
+```
+ cgexec -g memory:foo ./testmem 65536 1 1 -1 
+   Est(us)        PagesAccessed                  Set                Unset
+    677909                65536                65536                    0
+   4312142                65536                    0                65536
+```
+
+While in another:
+
+```
+$ while true; do echo; cat memory.pressure ; sleep 1; done
+
+some avg10=16.91 avg60=12.65 avg300=6.77 total=108268241
+full avg10=16.91 avg60=12.65 avg300=6.76 total=107974404
+
+some avg10=17.47 avg60=12.89 avg300=6.87 total=108285216
+full avg10=17.47 avg60=12.89 avg300=6.85 total=107991379
+
+```
+
+Note that some and all are equal since there is only a single task
+in the cgroup.
+
+So we see that 16/17% of the time is spent waiting on memory reclaim
+since we have breached memory.high.
+
+Let us check that a lower WSS - where we touch 1 in 4 pages - is
+reflected in PSI info.  Note we must let the avg300 window clear out
+by waiting 5 minutes before measuring to avoid cross-contamination from
+previous experiments, or create a fresh cgroup.
+
+```
+$  cgexec -g memory:foo ./testmem 65536 4 1 -1
+   Est(us)        PagesAccessed                  Set                Unset
+     29064                16384                16384                    0
+       244                16384                    0                16384
+       229                16384                16384                    0
+       205                16384                    0                16384
+       234                16384                16384                    0
+       214                16384                    0                16384
+
+```
+
+In another window:
+
+```
+$ while true; do echo; cat memory.pressure ; sleep 1; done
+
+some avg10=1.08 avg60=0.19 avg300=0.04 total=124762
+full avg10=1.08 avg60=0.19 avg300=0.04 total=124762
+
+some avg10=1.08 avg60=0.19 avg300=0.04 total=124762
+full avg10=1.08 avg60=0.19 avg300=0.04 total=124762
+
+some avg10=0.88 avg60=0.18 avg300=0.04 total=124762
+full avg10=0.88 avg60=0.18 avg300=0.04 total=124762
+
+...
+
+some avg10=0.00 avg60=0.08 avg300=0.02 total=124762
+full avg10=0.00 avg60=0.08 avg300=0.02 total=124762
+
+```
+
+We see over time the average falls as the total time spent
+waiting comprises the intial - above memory.high - 256Mb.
+
+So we see that over time PSI does reflect WSS since memory
+reclaim is driven by WSS.
+
+# Summary
+
+So we have learnt
+
+1. Working Set Size (WSS) is an important measure of the memory
+   your application is actually using (rather than memory it has
+   reserved).
+
+2. There are a number of ways to measure it, both directly via
+   idle page tracking and multi-generational LRU, and indirectly
+   via memory pressure.
+
+3. Each approach has its tradeoffs, but the above suggests that
+   multi-generational LRU is a valuable low-overhead approach for
+   WSS estimation which allows for fine-grained tracking, while
+   PSI is a great approach if the question you want to answer is
+   "is my workload stalled?"
+
+# References
+
+[Brendan's original WSS repository](https://github.com/brendangregg/wss)
+[Idle Page Tracking](https://docs.kernel.org/admin-guide/mm/idle_page_tracking.html)
+[Multi-Generational LRU](https://docs.kernel.org/admin-guide/mm/multigen_lru.html)
+[Pressure Stall Information](https://docs.kernel.org/accounting/psi.html)
+
 
