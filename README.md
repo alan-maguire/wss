@@ -583,7 +583,8 @@ could have been doing productive work but could not due to resource issues.
 
 The toplevel systemwide PSI metrics are exported in files in /proc/pressure .
 
-Here we attempt a kernel build while running stress-ng
+Here we attempt a kernel build while running stress-ng and examine overall
+system PSI stats (in `/proc/pressure/memory`):
 
 
 ```
@@ -601,11 +602,13 @@ Each file has a line for "full" which shows stall measurements for all non-idle
 tasks, and a line for "some" which shows the share of time some tasks are
 stalled.  10, 60 and 300sec cumulative averages are shown. The value is
 the proportion of the time wasted; so for avg10=0.1 some task is waiting
-for 10% of the interval (1sec), while we see that all tasks are waiting
-for 5% of the 10 second time window.
+for 0.1% of the interval (1sec), while we see that all tasks are waiting
+for 0.05% of the 10 second time window.
 
 The total= is the absolute stall time in microseconds; it allows us to see
 effects too small to make their way into the averages.
+
+The equivalent per-cgroup stats are in `memory.pressure` in the cgroup directory.
 
 Given that the definition of productive varies across the categories, we must
 ask what does a productive task mean in the context of memory?  It is defined
@@ -767,4 +770,9 @@ compare the data gathered to that from our WSS estimators.  This will
 allow us to see how a specified amount of memory pressure is quantified
 in PSI, and how that relates to the measured WSS.
 
-XXX to do
+To do this, we introduce a spiking element to WSS utilization in
+testmem; it normally touches one in N pages, but every specific number
+of iterations it will touch all pages.  If we set our cgroupv2 up such
+that the spike approaches its memory limit (`memory.max`) we should
+be able to see how PSI responds.
+

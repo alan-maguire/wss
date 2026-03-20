@@ -9,8 +9,8 @@
 
 int main(int argc, char *argv[])
 {
-	unsigned long i, accesspattern, accessed, numpages, set, unset;
-	int delay = 0, iters = -1, repeat = 0;
+	unsigned long i, accesspattern, accessed, numpages, set, unset, tmpaccess;
+	int delay = 0, iters = -1, repeat = 0, spike = 0, niters = 0;
 	int pagesize = getpagesize();
 	struct timeval ts1, ts2;
 	unsigned long dur_us;
@@ -33,6 +33,8 @@ int main(int argc, char *argv[])
 	}
 	if (argc > 4)
 		iters = atoi(argv[4]);
+	if (argc > 5)
+		spike = atoi(argv[5]);
 
 	if (prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0) < 0) {
 		fprintf(stderr, "could not disable transparent hugepages: %s\n",
@@ -49,9 +51,13 @@ int main(int argc, char *argv[])
 	if (!quiet)
 		printf("%10s %20s %20s %20s\n", "Est(us)", "PagesAccessed", "Set", "Unset");
 again:
+	/* if we want spike every n iters */
+	tmpaccess = accesspattern;
+	if (spike && (niters % spike) == 0)
+		tmpaccess = 1;
 	accessed = set = unset = 0;
 	gettimeofday(&ts1, NULL);
-	for (i = 0; i < numpages; i+= accesspattern) {
+	for (i = 0; i < numpages; i+= tmpaccess) {
 		if (!mem[(i * pagesize)]) {
 			mem[(i * pagesize)]++;
 			set++;
@@ -67,6 +73,8 @@ again:
 
 	if (!quiet)
 		printf("%10lu %20lu %20lu %20lu\n", dur_us, accessed, set, unset);
+	niters++;
+
 	if (repeat && (iters == -1 || --iters > 0)) {
 		sleep(delay);
 		goto again;
